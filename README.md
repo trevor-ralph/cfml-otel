@@ -237,6 +237,37 @@ between the Loki log line and the Tempo trace.
 * **CFML is case-insensitive.** `Span` and `span` are the same variable. This matters if you ever drop to
   Java interop.
 
+## Running alongside FusionReactor
+
+FusionReactor's agent (2025.2.0 and later) exports OTel itself, but it **does not register itself as the
+global OTel SDK**. Code that calls `GlobalOpenTelemetry.get()` gets a no-op, and cfml-otel works through
+`GlobalOpenTelemetry`. In practice:
+
+| Agents on the JVM | cfml-otel |
+|---|---|
+| OTel javaagent | Works (the normal setup) |
+| FusionReactor only | Every call is a no-op: no spans, metrics or logs. `otel.status()` reports `active: false` with `implementation` `...GlobalOpenTelemetry$ObfuscatedOpenTelemetry`. Harmless, but nothing is recorded. |
+| FusionReactor + OTel javaagent | FusionReactor's own docs suggest this for custom OTel instrumentation ("point both at the same collector"). In a local test (FusionReactor 2026.1.3, **unlicensed**, ACF 2025) the full suite passed. Unlicensed, FusionReactor exported nothing, so this doesn't show how the two behave with FusionReactor fully active. |
+
+Not verified (needs a licensed FusionReactor):
+- Whether each request is then traced twice, once by each agent, as separate traces.
+- Whether both agents write `traceparent` on outbound HTTP (last writer wins, which can split traces).
+- Overhead, and whether FusionReactor's own UI and profiler keep working with the OTel agent loaded.
+
+Recommendations:
+- Pick one agent per environment rather than stacking them. For example, the OTel javaagent + cfml-otel
+  in production and FusionReactor on dev/test servers. cfml-otel calls are safe no-ops where the OTel
+  agent isn't attached, so the same code runs everywhere.
+- If you do run both, attach FusionReactor to the server JVM only. On ACF that's `jvm.config`, not
+  `JAVA_TOOL_OPTIONS`, which ACF's setup tools also read: each would open FusionReactor's port and
+  activate its licence. Point FusionReactor's OTel export at your collector explicitly
+  (`-Dotel.exporter.otlp.endpoint=...`): with no endpoint it ships to FusionReactor's cloud (OpsPilot).
+  Then check for duplicate traces before relying on it.
+
+Sources: FusionReactor's [OTel migration guide](https://docs.fusionreactor.io/Getting-started/Tutorials/otel-migration/),
+[OTel shipping](https://docs.fusionreactor.io/Getting-started/Tutorials/otel-shipping/) and
+[OTel shipping config](https://docs.fusionreactor.io/Monitor-your-data/FR-Agent/Configuration/OTel-shipping-config/).
+
 ## Testing
 
 ```bash

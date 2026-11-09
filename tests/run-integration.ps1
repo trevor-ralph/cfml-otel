@@ -112,7 +112,7 @@ foreach ($e in $Engines) {
   $n = $sc.nested.value
   Check $e 'nested: return value + context' ($n.returned -eq 'ret' -and $n.innerTraceId -eq $T -and $n.currentInInner -eq $n.innerSpanId -and $n.currentAfter -eq $sid)
   Check $e 'nested: Tempo parentage' ($byName['s2.outer'].parent -eq $sid -and $byName['s2.inner'].parent -eq $byName['s2.outer'].id)
-  $a = $byName['s2.outer'].attrs
+  $a = if ($byName['s2.outer']) { $byName['s2.outer'].attrs } else { @{} }   # missing span = failed checks, not a crash
   $typed = $a['t.str'].stringValue -eq 'x' -and "$($a['t.num'].intValue)" -eq '42' -and $a['t.dbl'].doubleValue -eq 1.5 -and $a['t.bool'].boolValue -eq $true `
     -and (@($a['t.arr'].arrayValue.values | ForEach-Object { $_.stringValue }) -join ',') -eq 'a,b' `
     -and (@($a['t.nums'].arrayValue.values | ForEach-Object { $_.intValue }) -join ',') -eq '1,2,3'
@@ -163,7 +163,8 @@ foreach ($e in $Engines) {
     $cbSpans = @(Get-Spans $cb.T)
     $cbServer = $cbSpans | Where-Object { $_.kind -eq 'SPAN_KIND_SERVER' -and $_.parent -eq $cb.P } | Select-Object -First 1
     $cbHandler = $cbSpans | Where-Object name -eq 'cb.handler' | Select-Object -First 1
-    Check $e 'coldbox: interceptor tags the SERVER span with coldbox.event' ($null -ne $cbServer -and $cbServer.attrs['coldbox.event'].stringValue -eq 'main.index') "server=$($cbServer.id) coldbox.event=$($cbServer.attrs['coldbox.event'].stringValue)"
+    $cbEvent = if ($cbServer) { $cbServer.attrs['coldbox.event'].stringValue } else { '' }
+    Check $e 'coldbox: interceptor tags the SERVER span with coldbox.event' ($cbEvent -eq 'main.index') "server=$($cbServer.id) coldbox.event=$cbEvent"
     Check $e 'coldbox: handler span nests under the SERVER span' ($ci.handler.traceId -eq $cb.T -and $cbServer.id -eq $ci.serverSpanId -and $cbHandler.parent -eq $cbServer.id -and $ci.currentAfter -eq $ci.serverSpanId) "handler.parent=$($cbHandler.parent) server=$($cbServer.id)"
     $fServer = @(Get-Spans $cb.FT) | Where-Object { $_.kind -eq 'SPAN_KIND_SERVER' -and $_.parent -eq $cb.FP } | Select-Object -First 1
     $fTypes = ($fServer.eventObjs | Where-Object name -eq 'exception' | ForEach-Object { ($_.attributes | Where-Object key -eq 'exception.type').value.stringValue }) -join ','
