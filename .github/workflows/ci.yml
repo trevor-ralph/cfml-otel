@@ -34,8 +34,8 @@ jobs:
       - name: Build lib/ and fetch the agent
         run: ./build.sh
 
-      - name: Fetch ColdBox for the ColdBox tests
-        run: bash dev/fetch-coldbox.sh
+      - name: Fetch test dependencies (ColdBox, H2 JDBC driver)
+        run: bash dev/fetch-test-deps.sh
 
       - name: Start LGTM + ${{ matrix.engine }}
         run: docker compose -f dev/docker-compose.yml up -d --quiet-pull lgtm "$ENGINE"

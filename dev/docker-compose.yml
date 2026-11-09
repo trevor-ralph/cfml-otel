@@ -1,7 +1,8 @@
 # Dev/integration stack: the repo is mounted read-only at /cfml-otel under each engine web root; tests live in
 # /cfml-otel/tests/app (plain CFML) and /cfml-otel/tests/coldbox (ColdBox: ColdBox itself at /opt/coldbox, this repo
-# as an installed module at /opt/cbmodules/cfml-otel).
-# ../build.sh and fetch-coldbox.sh first, then `docker compose up -d`, then ../tests/run-integration.ps1
+# as an installed module at /opt/cbmodules/cfml-otel). The H2 JDBC driver for the cfquery scenario is mounted into each
+# engine's server lib folder.
+# ../build.sh and fetch-test-deps.sh first, then `docker compose up -d`, then ../tests/run-integration.ps1
 name: cfml-otel-dev
 
 x-otel-env: &otel-env
@@ -27,14 +28,16 @@ services:
       # Lucee runs cfhttp on a worker thread, so the agent's HttpClient spans start orphan traces and
       # overwrite the traceparent cfml-otel injects (LDEV-6519). Lucee 6 is left at the default as a control.
       OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED: "false"
-    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/h2.jar:/usr/local/tomcat/lib/h2.jar:ro"]
 
   lucee6:
     image: lucee/lucee:6.2.9.4
     depends_on: [lgtm]
     ports: ["8961:8888"]
     environment: { <<: *otel-env, OTEL_SERVICE_NAME: "cfml-otel-lucee6" }
-    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/h2.jar:/usr/local/tomcat/lib/h2.jar:ro"]
 
   acf2025:
     image: adobecoldfusion/coldfusion2025:2025.0.14
@@ -46,7 +49,8 @@ services:
       acceptEULA: "YES"            # accepted by the user for local development (dev/trial edition)
       password: "dev-admin-only"   # local throwaway CF admin password
       enableSecureProfile: "false"
-    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/h2.jar:/opt/coldfusion/cfusion/lib/h2.jar:ro"]
 
   acf2023:
     image: adobecoldfusion/coldfusion2023:2023.0.26
@@ -62,4 +66,5 @@ services:
       acceptEULA: "YES"            # accepted by the user for local development (dev/trial edition)
       password: "dev-admin-only"   # local throwaway CF admin password
       enableSecureProfile: "false"
-    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/h2.jar:/opt/coldfusion/cfusion/lib/h2.jar:ro"]

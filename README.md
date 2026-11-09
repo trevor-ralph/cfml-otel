@@ -11,7 +11,7 @@ attributes, metrics, OTel logs correlated with the trace, and context propagatio
 `runAsync` and message boundaries. Everything goes to the agent's SDK and exporters, so you ship
 OTLP to a Collector / Grafana Alloy and on to Tempo, Loki and Mimir/Prometheus (or any OTLP backend).
 
-> Status: **0.1.0 scaffold**. Integration-tested (127 checks, plain CFML and ColdBox 8.3) on Lucee 7.0.6,
+> Status: **0.1.0 scaffold**. Integration-tested (135 checks, plain CFML and ColdBox 8.3) on Lucee 7.0.6,
 > Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26 with agent 2.33.1 — see [Testing](#testing).
 
 ```cfml
@@ -195,6 +195,19 @@ thread name="t2" { application.otel.runInContext(ctx, function() { ... }); }
   Disabling that instrumentation also turns it off for Java libraries that use Apache HttpClient on the
   request thread. Usually that's the right trade, but check what your app uses.
 
+### Database queries (cfquery)
+
+Nothing to do: the agent's JDBC instrumentation traces `cfquery` / `queryExecute` on both engines, one CLIENT
+span per statement, nested under whatever span is current (the SERVER span, or your own `span()`). Tested
+on all four engines with H2:
+
+- Span name: operation + table, e.g. `SELECT mydb.orders`.
+- Attributes: `db.system`, `db.name`, `db.operation`, `db.sql.table`, `db.user`, `db.statement`.
+- `db.statement` is sanitized: literal values are replaced with `?` (`VALUES (1, 'first')` becomes
+  `VALUES (?, ?)`), so data from queries isn't recorded by default.
+
+Wrap a group of queries in `otel.span("orders.load", ...)` to see them as one unit of work.
+
 ### Metrics
 
 ```cfml
@@ -272,7 +285,7 @@ Sources: FusionReactor's [OTel migration guide](https://docs.fusionreactor.io/Ge
 
 ```bash
 ./build.sh
-bash dev/fetch-coldbox.sh                        # ColdBox 8.3 for tests/coldbox (pinned SHA-256)
+bash dev/fetch-test-deps.sh                      # ColdBox 8.3 (tests/coldbox) + H2 JDBC driver (cfquery), checksum-verified
 cd dev && docker compose up -d                   # Lucee 7, Lucee 6, ACF 2025, ACF 2023 + grafana/otel-lgtm
 pwsh ../tests/run-integration.ps1                # or: -Engines lucee7,acf2023
 ```

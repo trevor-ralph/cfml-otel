@@ -225,6 +225,19 @@ scenario("scopeClosedEarly", function() {
     return r;
 });
 
+// cfquery / queryExecute: the agent's JDBC instrumentation creates CLIENT spans for each statement, and they
+// nest under the cfml-otel span that is current when the query runs
+scenario("cfquery", function() {
+    return otel.span("s18.db", function(s) {
+        var ds = { "datasource": "cfmlotel_h2" };
+        queryExecute("CREATE TABLE IF NOT EXISTS cfmlotel_items (id INT PRIMARY KEY, name VARCHAR(50))", {}, ds);
+        queryExecute("MERGE INTO cfmlotel_items KEY(id) VALUES (1, 'first')", {}, ds);
+        var q = queryExecute("SELECT name FROM cfmlotel_items WHERE id = :id",
+            { "id": { "value": 1, "cfsqltype": "cf_sql_integer" } }, ds);
+        return { "spanId": s.getSpanId(), "rows": q.recordCount, "name": q.name[1] };
+    });
+});
+
 cfcontent(type = "application/json", reset = true);
 writeOutput(serializeJSON(out));
 </cfscript>

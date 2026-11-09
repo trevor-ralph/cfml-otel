@@ -153,6 +153,15 @@ foreach ($e in $Engines) {
   $ce = $sc.scopeClosedEarly.value
   Check $e 'span()/runInContext(): scope already closed by fn keeps result and original exception' ($ce.spanValue -eq 'value' -and $ce.contextValue -eq 'ctx' -and $ce.thrownType -eq 'Custom.Original' -and $ce.currentAfter -eq $sid -and $byName['s17.closed-early'].parent -eq $sid) ($ce | ConvertTo-Json -Compress)
 
+  # cfquery: the agent's JDBC spans (attribute names differ between DB semconv versions, so accept either)
+  $dq = $sc.cfquery.value
+  $dbSpan = $byName['s18.db']
+  $dbKids = @($spans | Where-Object { $dbSpan -and $_.parent -eq $dbSpan.id -and $_.kind -eq 'SPAN_KIND_CLIENT' })
+  $dbAttr = { param($s, [string[]]$keys) foreach ($k in $keys) { if ($s.attrs[$k]) { return $s.attrs[$k].stringValue } }; '' }
+  $dbSelects = @($dbKids | Where-Object { (& $dbAttr $_ 'db.system.name', 'db.system') -eq 'h2' -and (& $dbAttr $_ 'db.query.text', 'db.statement') -match 'SELECT .*cfmlotel_items' })
+  Check $e 'cfquery: query returned the row' ($dq.rows -eq 1 -and $dq.name -eq 'first') ($dq | ConvertTo-Json -Compress)
+  Check $e 'cfquery: agent JDBC spans (db h2) nest under the cfml-otel span' ($dbSpan.parent -eq $sid -and $dbSelects.Count -ge 1) (($dbKids | ForEach-Object { "$($_.name) [$(& $dbAttr $_ 'db.system.name', 'db.system')]" }) -join '; ')
+
   # ColdBox module (tests/coldbox)
   $cb = $run.cb
   if ($cb.error) {
