@@ -1,5 +1,7 @@
 # cfml-otel
 
+[![CI](https://github.com/trevor-ralph/cfml-otel/actions/workflows/ci.yml/badge.svg)](https://github.com/trevor-ralph/cfml-otel/actions/workflows/ci.yml)
+
 OpenTelemetry tracing, metrics and logs for **Lucee** and **Adobe ColdFusion**, built on top of the
 [OpenTelemetry javaagent](https://github.com/open-telemetry/opentelemetry-java-instrumentation).
 
@@ -38,7 +40,17 @@ CFML  ──>  models/OTel.cfc  ──>  lib/cfml-otel-bridge.jar  ──>  OTel
 
 ## Install
 
-### 1. Build `lib/`
+### 1. Get the module with `lib/` built
+
+**Easiest:** download `cfml-otel-<version>.zip` from [Releases](https://github.com/trevor-ralph/cfml-otel/releases)
+and unzip it where your app can map it. It contains the CFCs and the built jars. Each release also ships
+`SHA256SUMS` and a signed build-provenance attestation:
+
+```bash
+gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
+```
+
+**From source:**
 
 ```bash
 ./build.sh
@@ -225,6 +237,10 @@ pwsh ../tests/run-integration.ps1                # or: -Engines lucee7,acf2023
 
 It also leaks a scope deliberately and sends 40 more requests to make sure no pooled thread inherits it. Grafana is at
 http://localhost:3000. The ACF containers accept Adobe's EULA (developer/trial edition) via `acceptEULA=YES`.
+
+[CI](.github/workflows/ci.yml) runs the same suite on every push and pull request, one job per engine
+([tests/wait-for-stack.sh](tests/wait-for-stack.sh) waits out ACF's first-boot restart). Pushing a `v*` tag
+that matches `box.json`'s version runs [release.yml](.github/workflows/release.yml), which builds and publishes the release zip.
 
 ## Roadmap
 
