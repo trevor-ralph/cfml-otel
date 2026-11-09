@@ -1,0 +1,17 @@
+{
+    "name": "cfml-otel",
+    "slug": "cfml-otel",
+    "version": "0.1.0",
+    "type": "modules",
+    "shortDescription": "OpenTelemetry tracing, metrics and logs for Lucee and Adobe ColdFusion, on top of the OTel javaagent",
+    "keywords": [ "opentelemetry", "otel", "tracing", "metrics", "observability", "tempo", "loki" ],
+    "license": [ { "type": "Apache-2.0", "URL": "https://www.apache.org/licenses/LICENSE-2.0" } ],
+    "engines": [
+        { "type": "lucee", "version": ">=6.2" },
+        { "type": "adobe", "version": ">=2023" }
+    ],
+    "ignore": [ "**/.*", "java", "dev", "spike", "tests", "build.sh" ],
+    "scripts": {
+        "build": "!bash build.sh"
+    }
+}

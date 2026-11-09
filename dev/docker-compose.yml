@@ -1,0 +1,59 @@
+# Dev/integration stack: the repo is mounted read-only at /cfml-otel under each engine web root; tests live in /cfml-otel/tests/app.
+# ../build.sh first (builds lib/ and fetches the agent), then `docker compose up -d`, then ../tests/run-integration.ps1
+name: cfml-otel-dev
+
+x-otel-env: &otel-env
+  JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4318"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  OTEL_BSP_SCHEDULE_DELAY: "500"
+  OTEL_BLRP_SCHEDULE_DELAY: "500"
+  OTEL_METRIC_EXPORT_INTERVAL: "5000"
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.40.0
+    ports: ["3000:3000", "4317:4317", "4318:4318"]
+
+  lucee7:
+    image: lucee/lucee:7.0.6.10
+    depends_on: [lgtm]
+    ports: ["8971:8888"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: "cfml-otel-lucee7"
+      # Lucee runs cfhttp on a worker thread, so the agent's HttpClient spans start orphan traces and
+      # overwrite the traceparent cfml-otel injects (LDEV-6519). Lucee 6 is left at the default as a control.
+      OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED: "false"
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro"]
+
+  lucee6:
+    image: lucee/lucee:6.2.9.4
+    depends_on: [lgtm]
+    ports: ["8961:8888"]
+    environment: { <<: *otel-env, OTEL_SERVICE_NAME: "cfml-otel-lucee6" }
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro"]
+
+  acf:
+    image: adobecoldfusion/coldfusion2025:2025.0.14
+    depends_on: [lgtm]
+    ports: ["8951:8500"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: "cfml-otel-acf2025"
+      acceptEULA: "YES"            # accepted by the user for local development (dev/trial edition)
+      password: "dev-admin-only"   # local throwaway CF admin password
+      enableSecureProfile: "false"
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro"]
+
+  acf2023:
+    image: adobecoldfusion/coldfusion2023:2023.0.26
+    depends_on: [lgtm]
+    ports: ["8941:8500"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: "cfml-otel-acf2023"
+      acceptEULA: "YES"            # accepted by the user for local development (dev/trial edition)
+      password: "dev-admin-only"   # local throwaway CF admin password
+      enableSecureProfile: "false"
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro"]

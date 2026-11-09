@@ -1,0 +1,89 @@
+# Classloading spike: does CFML -> GlobalOpenTelemetry reach the OTel javaagent's SDK?
+# Run ./fetch-jars.sh first, then `docker compose up -d`, then ./run-probes.ps1
+name: cfml-otel-spike
+
+x-otel-env: &otel-env
+  JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm:4318"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  OTEL_BSP_SCHEDULE_DELAY: "500"
+  OTEL_METRIC_EXPORT_INTERVAL: "10000"
+
+x-lucee: &lucee
+  depends_on: [lgtm]
+  volumes: &lucee-volumes
+    - ./www:/var/www
+    - ./agent:/otel:ro
+    - ./jars:/jars:ro
+    # OSGi strategy: drop the API bundles into Lucee's bundle repo (file-by-file so Lucee's own bundles stay visible)
+    - ./jars/otel/opentelemetry-api-1.67.0.jar:/opt/lucee/server/lucee-server/bundles/opentelemetry-api-1.67.0.jar:ro
+    - ./jars/otel/opentelemetry-context-1.67.0.jar:/opt/lucee/server/lucee-server/bundles/opentelemetry-context-1.67.0.jar:ro
+    - ./jars/otel/opentelemetry-common-1.67.0.jar:/opt/lucee/server/lucee-server/bundles/opentelemetry-common-1.67.0.jar:ro
+
+x-acf: &acf
+  image: adobecoldfusion/coldfusion2025:2025.0.14
+  depends_on: [lgtm]
+  volumes: &acf-volumes
+    - ./www:/app
+    - ./agent:/otel:ro
+    - ./jars:/jars:ro
+
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.40.0
+    ports: ["3000:3000", "4317:4317", "4318:4318"]
+
+  lucee6:
+    <<: *lucee
+    image: lucee/lucee:6.2.9.4
+    ports: ["8861:8888"]
+    environment: { <<: *otel-env, OTEL_SERVICE_NAME: "spike-lucee6" }
+
+  lucee7:
+    <<: *lucee
+    image: lucee/lucee:7.0.6.10
+    ports: ["8871:8888"]
+    environment: { <<: *otel-env, OTEL_SERVICE_NAME: "spike-lucee7" }
+
+  # Same, but with the API jars on Tomcat's common classpath
+  lucee7-serverlib:
+    <<: *lucee
+    image: lucee/lucee:7.0.6.10
+    ports: ["8872:8888"]
+    environment: { <<: *otel-env, OTEL_SERVICE_NAME: "spike-lucee7-serverlib", PROBE_LABEL: "tomcat-lib" }
+    volumes:
+      - ./www:/var/www
+      - ./agent:/otel:ro
+      - ./jars:/jars:ro
+      - ./jars/otel/opentelemetry-api-1.67.0.jar:/usr/local/tomcat/lib/opentelemetry-api-1.67.0.jar:ro
+      - ./jars/otel/opentelemetry-context-1.67.0.jar:/usr/local/tomcat/lib/opentelemetry-context-1.67.0.jar:ro
+      - ./jars/otel/opentelemetry-common-1.67.0.jar:/usr/local/tomcat/lib/opentelemetry-common-1.67.0.jar:ro
+
+  acf:
+    <<: *acf
+    ports: ["8851:8500"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: "spike-acf2025"
+      acceptEULA: "YES"            # approved by the user for this spike (dev/trial edition)
+      password: "spike-admin-only" # local throwaway CF admin password
+      enableSecureProfile: "false"
+
+  # Same, but with the API jars in cfusion/lib (server classpath)
+  acf-serverlib:
+    <<: *acf
+    ports: ["8852:8500"]
+    environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: "spike-acf2025-serverlib"
+      PROBE_LABEL: "cfusion-lib"
+      acceptEULA: "YES"
+      password: "spike-admin-only"
+      enableSecureProfile: "false"
+    volumes:
+      - ./www:/app
+      - ./agent:/otel:ro
+      - ./jars:/jars:ro
+      - ./jars/otel/opentelemetry-api-1.67.0.jar:/opt/coldfusion/cfusion/lib/opentelemetry-api-1.67.0.jar:ro
+      - ./jars/otel/opentelemetry-context-1.67.0.jar:/opt/coldfusion/cfusion/lib/opentelemetry-context-1.67.0.jar:ro
+      - ./jars/otel/opentelemetry-common-1.67.0.jar:/opt/coldfusion/cfusion/lib/opentelemetry-common-1.67.0.jar:ro
