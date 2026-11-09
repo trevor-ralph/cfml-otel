@@ -1,0 +1,16 @@
+# build outputs (run ./build.sh; publishing to ForgeBox must build lib/ first)
+java/target/
+lib/*.jar
+
+# downloaded / generated
+dev/agent/
+dev/coldbox/
+tests/results/
+spike/agent/
+spike/jars/
+spike/results/
+
+# files ACF writes into a mounted web root
+WEB-INF/cfclasses/
+config.log
+crossdomain.xml

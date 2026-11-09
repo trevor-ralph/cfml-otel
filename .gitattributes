@@ -1,0 +1,3 @@
+# keep LF everywhere: build.sh and the CFML run inside Linux containers
+* text=auto eol=lf
+*.jar binary

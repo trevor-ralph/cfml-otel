@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions in .github/workflows current (the repo requires SHA pinning).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Build plugins for the bridge. The OTel API version is deliberately excluded: it must stay
+  # <= the javaagent's bundled SDK version, so it is bumped together with AGENT_VERSION in build.sh.
+  - package-ecosystem: maven
+    directory: /java
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "io.opentelemetry:*"

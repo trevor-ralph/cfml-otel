@@ -1,0 +1,64 @@
+# Builds lib/ and runs the integration suite (Tempo / Prometheus / Loki checks) on every engine.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: integration (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [lucee7, lucee6, acf2025, acf2023]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check version strings agree
+        run: bash tests/check-versions.sh
+
+      - name: Build lib/ and fetch the agent
+        run: ./build.sh
+
+      - name: Fetch ColdBox for the ColdBox tests
+        run: bash dev/fetch-coldbox.sh
+
+      - name: Start LGTM + ${{ matrix.engine }}
+        run: docker compose -f dev/docker-compose.yml up -d --quiet-pull lgtm "$ENGINE"
+        env:
+          ENGINE: ${{ matrix.engine }}
+
+      - name: Wait for the stack
+        run: tests/wait-for-stack.sh "$ENGINE"
+        env:
+          ENGINE: ${{ matrix.engine }}
+
+      - name: Integration tests
+        shell: pwsh
+        run: ./tests/run-integration.ps1 -Engines $env:ENGINE -ExportWaitSeconds 20
+        env:
+          ENGINE: ${{ matrix.engine }}
+
+      - name: Container logs
+        if: failure()
+        run: docker compose -f dev/docker-compose.yml logs --tail 200 "$ENGINE"
+        env:
+          ENGINE: ${{ matrix.engine }}
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f dev/docker-compose.yml down

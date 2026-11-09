@@ -1,0 +1,57 @@
+# On a v* tag: builds lib/, packages the module zip, publishes SHA-256 checksums and a signed
+# build-provenance attestation, and creates the GitHub release.
+# Verify a download with: gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write       # create the release and upload assets
+      id-token: write       # sign the provenance attestation
+      attestations: write   # store the attestation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check tag matches the version in box.json, ModuleConfig, pom.xml and the bridge
+        run: bash tests/check-versions.sh "$TAG"
+        env:
+          TAG: ${{ github.ref_name }}
+
+      - name: Build lib/
+        run: ./build.sh
+
+      - name: Package
+        run: |
+          mkdir dist
+          zip -r -X "dist/cfml-otel-${TAG#v}.zip" box.json ModuleConfig.cfc README.md LICENSE NOTICE models interceptors lib
+          (cd dist && sha256sum -- *.zip > SHA256SUMS)
+          unzip -l dist/*.zip
+          cat dist/SHA256SUMS
+        env:
+          TAG: ${{ github.ref_name }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.zip
+
+      - name: Create GitHub release
+        run: |
+          flags=()
+          [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG" "${flags[@]}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
