@@ -34,7 +34,7 @@ jobs:
       - name: Package
         run: |
           mkdir dist
-          zip -r -X "dist/cfml-otel-${TAG#v}.zip" box.json ModuleConfig.cfc README.md LICENSE NOTICE models interceptors lib
+          zip -r -X "dist/cfml-otel-${TAG#v}.zip" box.json ModuleConfig.cfc README.md CHANGELOG.md LICENSE NOTICE models interceptors lib
           (cd dist && sha256sum -- *.zip > SHA256SUMS)
           unzip -l dist/*.zip
           cat dist/SHA256SUMS
@@ -50,7 +50,10 @@ jobs:
         run: |
           flags=()
           [[ "$TAG" == *-* ]] && flags+=(--prerelease)
-          gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG" "${flags[@]}"
+          # This version's CHANGELOG.md section as the notes (GitHub appends its generated changelog link)
+          awk -v h="## [${TAG#v}]" 'index($0, h) == 1 {on=1; next} on && index($0, "## [") == 1 {exit} on' CHANGELOG.md > notes.md
+          [[ -s notes.md ]] || { echo "CHANGELOG.md has no section for ${TAG#v}" >&2; exit 1; }
+          gh release create "$TAG" dist/* --verify-tag --notes-file notes.md --generate-notes --title "$TAG" "${flags[@]}"
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

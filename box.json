@@ -1,7 +1,7 @@
 {
     "name": "cfml-otel",
     "slug": "cfml-otel",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "type": "modules",
     "shortDescription": "OpenTelemetry tracing, metrics and logs for Lucee and Adobe ColdFusion, on top of the OTel javaagent",
     "author": "Trevor Ralph",

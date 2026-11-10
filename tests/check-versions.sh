@@ -19,6 +19,8 @@ agent="$(sed -n 's/^AGENT_VERSION="\${AGENT_VERSION:-\([^}]*\)}".*/\1/p' build.s
 tested="$(sed -n 's/.*String TESTED_AGENT_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' java/src/main/java/cfmlotel/bridge/OtelBridge.java | head -1)"
 echo "build.sh AGENT_VERSION=$agent OtelBridge.TESTED_AGENT_VERSION=$tested"
 [[ -n "$agent" && "$agent" == "$tested" ]] || { echo "OtelBridge.TESTED_AGENT_VERSION must equal build.sh's AGENT_VERSION" >&2; exit 1; }
+# CHANGELOG.md needs a section for this version: the release workflow publishes it as the release notes
+grep -qF "## [$box]" CHANGELOG.md || { echo "CHANGELOG.md has no \"## [$box]\" section" >&2; exit 1; }
 if [[ $# -gt 0 ]]; then
   [[ "$1" == "v$box" ]] || { echo "tag $1 does not match box.json version (v$box)" >&2; exit 1; }
 fi
