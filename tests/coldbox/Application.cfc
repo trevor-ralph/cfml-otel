@@ -14,7 +14,8 @@ component {
     this.mappings["/cbmodules"] = "/opt/cbmodules";
     this.mappings["/cbapp"] = variables.appRoot;
     // ColdBox can't change the classpath, so the host app loads the module's jars (see README)
-    this.javaSettings = { loadPaths: ["/opt/cbmodules/cfml-otel/lib/"], loadColdFusionClassPath: true, reloadOnChange: false };
+    // (lib/sdk/ only matters with sdkFallback; harmless with the agent, which is what the agent jobs check)
+    this.javaSettings = { loadPaths: ["/opt/cbmodules/cfml-otel/lib/", "/opt/cbmodules/cfml-otel/lib/sdk/"], loadColdFusionClassPath: true, reloadOnChange: false };
 
     COLDBOX_APP_ROOT_PATH = variables.appRoot;
     COLDBOX_APP_MAPPING = "cbapp";

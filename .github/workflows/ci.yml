@@ -1,6 +1,7 @@
 # Builds lib/ and runs the integration suite (Tempo / Prometheus / Loki checks) on every engine, with the
 # same containerized commands as a local run (README "Testing"). Lucee also runs on ARM; the ACF and
-# SQL Server images are x86-64 only, so the ARM jobs skip the SQL Server checks.
+# SQL Server images are x86-64 only, so the ARM jobs skip the SQL Server checks. The *-sdk engines run without
+# the javaagent, on cfml-otel's own SDK (sdkFallback).
 name: CI
 
 on:
@@ -31,6 +32,10 @@ jobs:
           - { engine: acf2023, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: lucee7,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
           - { engine: lucee6,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
+          # No javaagent: cfml-otel's own SDK (sdkFallback); no JDBC tracing, so no SQL Server
+          - { engine: lucee7-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
+          - { engine: acf2025-sdk, arch: x64,   runner: ubuntu-latest,    mssql: "0" }
+          - { engine: lucee7-sdk,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
     env:
       ENGINES: ${{ matrix.engine }}
       MSSQL: ${{ matrix.mssql }}

@@ -1,0 +1,49 @@
+"""The request's SERVER span: made by the agent, or by cfml-otel itself on the no-agent (sdkFallback) engines.
+Same expectations either way, so an app can move between the two without its traces changing shape."""
+from __future__ import annotations
+
+import pytest
+
+import harness
+
+
+def test_server_span_attributes(run, server_id):
+    server = harness.server_span(run.trace_id, run.parent_id)
+    assert server is not None and server.id == server_id
+    assert server.attrs["http.request.method"] == "GET"
+    assert server.attrs["http.response.status_code"] == 200
+    assert server.attrs["url.path"].endswith("/tests/app/scenarios.cfm"), server.attrs
+    assert server.status != "STATUS_CODE_ERROR"
+    if run.target.sdk:
+        assert server.scope == "cfml-otel-tests", server.scope
+        assert server.name == "GET /cfml-otel/tests/app/scenarios.cfm", server.name
+        assert server.attrs["http.route"] == "/cfml-otel/tests/app/scenarios.cfm"
+        assert server.attrs["url.scheme"] == "http" and server.attrs["server.port"] > 0, server.attrs
+        assert "client.address" in server.attrs and "user_agent.original" in server.attrs, server.attrs
+
+
+def test_unhandled_error_marks_the_server_span(run):
+    assert run.fail["status"] == 500, run.fail
+    server = harness.server_span(run.fail["T"], run.fail["P"])
+    assert server is not None, [s.name for s in harness.spans(run.fail["T"])]
+    assert server.status == "STATUS_CODE_ERROR"
+    assert "Custom.ServerFail" in server.event_attr("exception", "exception.type"), server.events
+    assert server.attrs.get("http.response.status_code") == 500, server.attrs
+
+
+def test_child_spans_and_leak_cleanup_keep_the_server_span_current(named, server_id):
+    # closeLeakedScopes() mid-request (s16/s17) must not close the fallback's SERVER scope:
+    # spans started afterwards still nest under it
+    assert named["s16.outer"].parent == server_id
+    assert named["s25.after-cleanup"].parent == server_id
+
+
+def test_sdk_fallback_status(run):
+    if not run.target.sdk:
+        s = run.response["status"]
+        assert s["mode"] == "agent" and s["sdkFallback"] == {}, s
+        pytest.skip("agent engine: the fallback is off (sdkFallback not requested)")
+    s = run.response["status"]
+    assert s["mode"] == "sdk" and s["sdkFallback"]["started"], s
+    assert s["sdkFallback"]["serviceName"] == run.target.service, s
+    assert s["implementation"].startswith("io.opentelemetry.sdk."), s

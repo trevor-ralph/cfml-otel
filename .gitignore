@@ -1,6 +1,7 @@
 # build outputs (run ./build.sh; publishing to ForgeBox must build lib/ first)
 java/target/
 lib/*.jar
+lib/sdk/
 
 # downloaded / generated
 dev/agent/

@@ -1,5 +1,6 @@
 /**
- * ColdBox request lifecycle hooks: tags the agent's SERVER span with the ColdBox event and route
+ * ColdBox request lifecycle hooks: starts the SERVER span in sdkFallback mode (the agent makes it otherwise),
+ * tags the SERVER span with the ColdBox event and route
  * (coldbox.event / coldbox.route attributes; the span keeps the agent's name), records unhandled
  * exceptions on it, and closes any scopes left open at the end of the request.
  *
@@ -12,6 +13,8 @@ component {
     property name="settings" inject="coldbox:moduleSettings:cfml-otel";
 
     function preProcess(event, data, rc, prc) {
+        // sdkFallback (no agent): starts the request's SERVER span; a no-op with the agent
+        otel.onRequestStart();
         if (!settings.traceEvents) return;
         otel.currentSpan()
             .setAttributes({ "coldbox.event": event.getCurrentEvent(), "coldbox.route": event.getCurrentRoutedURL() });

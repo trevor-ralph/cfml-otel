@@ -135,6 +135,42 @@ scenario("cfhttp", function() {
     }, { "kind": "client" });
 });
 
+// httpSpan() / http(): the helpers. Each call sits in a wrapper span so the tests can find the CLIENT span(s)
+// it produced: exactly one per call, whether the helper or (ACF, agent mode) the agent made it.
+echoBase = "http://127.0.0.1:" & getPageContext().getRequest().getLocalPort() & getDirectoryFromPath(cgi.script_name);
+
+scenario("httpSpan", function() {
+    return deserializeJSON(otel.span("s21.wrap", function() {
+        return otel.httpSpan(echoBase & "echo.cfm", function(headers, s) {
+            cfhttp(url = echoBase & "echo.cfm", method = "get", result = "local.res", timeout = 10) {
+                for (var k in headers) cfhttpparam(type = "header", name = k, value = headers[k]);
+            }
+            return local.res;
+        }, { "urlTemplate": "/echo.cfm" });
+    }).fileContent);
+});
+
+scenario("httpPost", function() {
+    return deserializeJSON(otel.span("s22.wrap", function() {
+        return otel.http(echoBase & "echo.cfm", { "method": "post", "headers": { "X-Test": "yes" },
+            "body": "hello body", "timeout": 10, "cfhttp": { "charset": "utf-8" } });
+    }).fileContent);
+});
+
+scenario("http404", function() {
+    var r = otel.span("s23.wrap", function() {
+        return otel.http(echoBase & "echo.cfm?status=404", { "timeout": 10 });
+    });
+    return { "statusCode": r.statusCode };
+});
+
+scenario("httpConnectionFailure", function() {
+    var r = otel.span("s24.wrap", function() {
+        return otel.http("http://127.0.0.1:1/unreachable", { "timeout": 5 });
+    });
+    return { "statusCode": r.statusCode };
+});
+
 // Inbound propagation: extractContext() from custom headers (e.g. a queue message)
 scenario("extract", function() {
     var R = hex(32);
@@ -166,6 +202,16 @@ scenario("logs", function() {
     var marker = "m" & hex(16);
     otel.logInfo("s11 hello #marker#", { "scenario": "logs" });
     otel.logError("s11 failure #marker#");
+    return { "marker": marker, "traceId": otel.traceId() };
+});
+
+// cflog / writeLog: no cfml-otel call. Does the agent's logging instrumentation pick these up?
+scenario("cflog", function() {
+    var marker = "c" & hex(16);
+    writeLog(text = "s20 custom-file #marker#", type = "information", file = "cfmlotel-test");
+    // "error": Lucee's application log only records errors by default (.CFConfig.json loggers.application.level)
+    writeLog(text = "s20 application-log #marker#", type = "error");
+    cflog(text = "s20 cflog-tag #marker#", type = "error", file = "cfmlotel-test");
     return { "marker": marker, "traceId": otel.traceId() };
 });
 
@@ -202,19 +248,19 @@ scenario("leakInsideSpan", function() {
     r["currentAfterOuterClose"] = otel.spanId();
     b.end();
     a.end();
-    r["leftOpen"] = otel.onRequestEnd();
+    r["leftOpen"] = otel.closeLeakedScopes();
     return r;
 });
 
-// fn closes span()'s / runInContext()'s own scope (here via onRequestEnd()): no library error, and
+// fn closes span()'s / runInContext()'s own scope (here via closeLeakedScopes()): no library error, and
 // fn's return value or its original exception still reaches the caller
 scenario("scopeClosedEarly", function() {
     var r = {};
-    r["spanValue"] = otel.span("s17.closed-early", function() { otel.onRequestEnd(); return "value"; });
-    r["contextValue"] = otel.runInContext(otel.captureContext(), function() { otel.onRequestEnd(); return "ctx"; });
+    r["spanValue"] = otel.span("s17.closed-early", function() { otel.closeLeakedScopes(); return "value"; });
+    r["contextValue"] = otel.runInContext(otel.captureContext(), function() { otel.closeLeakedScopes(); return "ctx"; });
     try {
         otel.span("s17.closed-early-fails", function() {
-            otel.onRequestEnd();
+            otel.closeLeakedScopes();
             throw(type = "Custom.Original", message = "original");
         });
         r["thrownType"] = "none";
@@ -223,6 +269,12 @@ scenario("scopeClosedEarly", function() {
     }
     r["currentAfter"] = otel.spanId();
     return r;
+});
+
+// After the closeLeakedScopes() calls above: new spans must still nest under the SERVER span (the sdkFallback
+// SERVER scope is never closed as a "leak")
+scenario("afterCleanup", function() {
+    return otel.span("s25.after-cleanup", function(s) { return s.getSpanId(); });
 });
 
 // cfquery / queryExecute against SQL Server: the agent's JDBC instrumentation creates CLIENT spans for each

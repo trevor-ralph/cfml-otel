@@ -14,7 +14,25 @@ def test_all_scenarios_ran_without_error(run):
 
 def test_status_enabled_bridged_active(run):
     s = run.response["status"]
-    assert s["enabled"] and s["agentBridged"] and s["active"], s
+    if run.target.sdk:
+        assert s["enabled"] and s["active"] and s["mode"] == "sdk" and not s["agentBridged"], s
+    else:
+        assert s["enabled"] and s["agentBridged"] and s["active"] and s["mode"] == "agent", s
+
+
+def test_startup_check_reports_versions_and_warnings(run, engine):
+    s = run.response["status"]
+    if run.target.sdk:
+        assert not s["agentPresent"] and s["sdkFallback"]["started"] and s["apiVersion"], s
+        assert s["warnings"] == [], s["warnings"]
+        return
+    assert s["apiVersion"] and s["agentPresent"], s
+    assert s["agentVersion"] == s["testedAgentVersion"], s
+    assert s["agentPath"] == "/otel/opentelemetry-javaagent.jar", s
+    assert s["otherAgents"] == [], s
+    # Lucee 6 keeps the agent's HttpClient instrumentation on as the LDEV-6519 control (dev/docker-compose.yml)
+    expected = ["LUCEE_HTTPCLIENT_INSTRUMENTATION"] if engine == "lucee6" else []
+    assert [w["code"] for w in s["warnings"]] == expected, s["warnings"]
 
 
 def test_request_continues_incoming_trace(run):
@@ -105,6 +123,8 @@ def test_cfthread_with_bindcontext(run, named, server_id):
 
 
 def test_runasync_keeps_the_trace(run, named, server_id):
+    if run.target.sdk and run.value("runAsync")["traceId"] != run.trace_id:
+        pytest.xfail("without the agent, runAsync threads don't inherit the context (use bindContext)")
     assert run.value("runAsync")["traceId"] == run.trace_id
     assert named["s5.async"].parent == server_id
 
@@ -156,7 +176,9 @@ def test_scope_closed_early_keeps_result_and_original_exception(run, named, serv
 
 # ---- cfquery (SQL Server) ---------------------------------------------------------------------------
 
-needs_mssql = pytest.mark.skipif(not harness.MSSQL, reason="MSSQL=0: no SQL Server container")
+def _needs_db(run):
+    if not run.target.db:
+        pytest.skip("no SQL Server (MSSQL=0), or no agent to trace JDBC (sdk engines)")
 
 
 def _db_attr(span: harness.Span, *keys: str):
@@ -164,14 +186,14 @@ def _db_attr(span: harness.Span, *keys: str):
     return next((span.attrs[k] for k in keys if k in span.attrs), None)
 
 
-@needs_mssql
 def test_cfquery_returned_the_row(run):
+    _needs_db(run)
     q = run.value("cfquery")
     assert q["rows"] == 1 and q["name"] == "first", q
 
 
-@needs_mssql
 def test_cfquery_jdbc_spans_nest_under_the_cfml_otel_span(run, named, server_id):
+    _needs_db(run)
     db = named["s18.db"]
     assert db.parent == server_id
     kids = [s for s in harness.spans(run.trace_id) if s.parent == db.id and s.kind == "SPAN_KIND_CLIENT"]
@@ -180,8 +202,8 @@ def test_cfquery_jdbc_spans_nest_under_the_cfml_otel_span(run, named, server_id)
     assert selects, [s.name for s in kids]
 
 
-@needs_mssql
 def test_cfquery_spans_identify_sql_server(run, named):
+    _needs_db(run)
     db = named["s18.db"]
     kids = [s for s in harness.spans(run.trace_id) if s.parent == db.id and s.kind == "SPAN_KIND_CLIENT"]
     systems = {_db_attr(s, "db.system.name", "db.system") for s in kids}
@@ -194,8 +216,8 @@ def test_cfquery_spans_identify_sql_server(run, named):
     assert all(s.attrs.get("server.address") == "mssql" for s in kids), [s.attrs for s in kids]
 
 
-@needs_mssql
 def test_cfquery_acf_microsoft_driver_identifies_sql_server(run, named):
+    _needs_db(run)
     """The workaround for ACF's built-in driver: Microsoft's JDBC driver as an "Other" datasource."""
     if not run.target.is_acf:
         pytest.skip("ACF only (Lucee already uses Microsoft's driver)")
@@ -222,6 +244,18 @@ def test_metrics_reach_prometheus(run):
     missing = [w for w in ("calls", "latency", "level", "inflight")
                if not any(n.startswith(f"cfmlotel_test_{w}") for n in names)]
     assert not missing, names
+
+
+def test_cflog_reaches_loki_correlated_with_the_trace(run):
+    """cflog / writeLog with no cfml-otel call: both engines log through log4j2, which the agent captures."""
+    if run.target.sdk:
+        pytest.xfail("cflog capture is the agent's log4j2 instrumentation; without it use otel.log*()")
+    marker = run.value("cflog")["marker"]
+    streams = harness.loki_streams(f'{{service_name="{run.target.service}"}} |= "{marker}"', run.started)
+    # Lucee 6 prefixes the body with "<app name>->"
+    found = {v[1].split(marker)[0].split("->")[-1].strip(): s["stream"] for s in streams for v in s["values"]}
+    assert set(found) == {"s20 custom-file", "s20 application-log", "s20 cflog-tag"}, found
+    assert all(st.get("trace_id") == run.trace_id for st in found.values()), found
 
 
 def test_logs_reach_loki_correlated_with_the_trace(run):

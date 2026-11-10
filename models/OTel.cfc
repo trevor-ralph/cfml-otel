@@ -24,6 +24,14 @@ component {
             "meterName": "",          // defaults to tracerName
             "loggerName": "",         // defaults to tracerName
             "logLeakedScopes": true,  // writeLog() when onRequestEnd() has to close scopes the app leaked
+            "logDiagnostics": true,   // writeLog() the startup check's warnings (also in status().warnings)
+            // httpSpan() / http(): "auto" creates CLIENT spans unless the agent already traces cfhttp correctly
+            // (ACF with its HttpClient instrumentation on); "always" / "never" force it either way
+            "cfhttpSpans": "auto",
+            // No javaagent attached and nothing else registered: start cfml-otel's own SDK (needs lib/sdk/ in
+            // loadPaths). Configured by the standard OTEL_* env vars; you must call onRequestStart()/onRequestEnd().
+            "sdkFallback": false,
+            "serviceName": "",        // fallback only: service.name when OTEL_SERVICE_NAME isn't set (default: app name)
             "bridgeClass": "cfmlotel.bridge.OtelBridge"
         };
         structAppend(cfg, arguments.config, true);
@@ -35,7 +43,11 @@ component {
             "agentBridged": false,
             "active": false,
             "reason": "",
-            "bridgeVersion": ""
+            "bridgeVersion": "",
+            "diagnostics": { "warnings": [] },
+            "httpMode": "off",        // span: httpSpan() creates the CLIENT span | agent: the agent does | off
+            "mode": "off",            // agent | sdk (fallback) | other (another implementation) | noop | off
+            "sdk": {}                 // the fallback's start result, when requested
         };
         var st = this.__state;
         // Class handle used on every scope open/close; looked up once instead of per span
@@ -51,6 +63,13 @@ component {
         }
         try {
             st.bridge = createObject("java", cfg.bridgeClass);
+            if (cfg.sdkFallback) {
+                if (st.bridge.isSdkFallback() || (!st.bridge.isActive() && !st.bridge.isAgentAttached())) {
+                    st.sdk = this._toCfml(st.bridge.startSdkFallback({ "otel.service.name": this._defaultServiceName() }));
+                } else {
+                    st.sdk = { "started": false, "shared": false, "serviceName": "", "error": "", "notNeeded": true };
+                }
+            }
             var meterName = len(cfg.meterName) ? cfg.meterName : cfg.tracerName;
             var loggerName = len(cfg.loggerName) ? cfg.loggerName : cfg.tracerName;
             st.tracer = st.bridge.tracer(cfg.tracerName, cfg.tracerVersion);
@@ -60,11 +79,82 @@ component {
             st.agentBridged = st.bridge.isAgentBridged();
             st.active = st.bridge.isActive();
             st.enabled = true;
+            st.mode = st.bridge.isSdkFallback() ? "sdk" : (st.agentBridged ? "agent" : (st.active ? "other" : "noop"));
             if (!st.active) st.reason = "OpenTelemetry API loaded but no SDK/agent is active (no-op)";
         } catch (any e) {
             st.reason = "could not load #cfg.bridgeClass# (are cfml-otel/lib jars in this.javaSettings.loadPaths?): " & e.message;
+            st.diagnostics.warnings = [{ "level": "warn", "code": "BRIDGE_NOT_LOADED",
+                "message": "cfml-otel is a no-op: " & st.reason }];
+        }
+        if (st.enabled) {
+            try {
+                var isLucee = structKeyExists(server, "lucee");
+                if (cfg.cfhttpSpans == "always") st.httpMode = "span";
+                else if (cfg.cfhttpSpans == "never") st.httpMode = "agent";
+                else st.httpMode = (!isLucee && st.bridge.agentTracesHttpClient()) ? "agent" : "span";
+            } catch (any e) {
+                st.httpMode = "span";
+            }
+            try {
+                st.diagnostics = this._toCfml(st.bridge.diagnostics(structKeyExists(server, "lucee") ? "lucee" : "acf"));
+                if (!st.active && arrayLen(st.diagnostics.warnings)) st.reason = st.diagnostics.warnings[1].message;
+            } catch (any e) {
+                st.diagnostics = { "warnings": [{ "level": "warn", "code": "DIAGNOSTICS_FAILED",
+                    "message": "cfml-otel's startup check failed: " & e.message }] };
+            }
+            if (structKeyExists(st.sdk, "started")) {
+                var fallbackWarning = {};
+                if (!st.sdk.started && len(st.sdk.error)) {
+                    fallbackWarning = { "level": "warn", "code": "SDK_FALLBACK_FAILED",
+                        "message": "sdkFallback is on, but cfml-otel's SDK didn't start, so cfml-otel is a no-op: " & st.sdk.error };
+                    st.reason = fallbackWarning.message;
+                } else if (st.sdk.shared && st.sdk.serviceName != this._defaultServiceName()) {
+                    fallbackWarning = { "level": "info", "code": "SDK_FALLBACK_SHARED",
+                        "message": "Another application sharing cfml-otel's jars (one class loader) already started the fallback SDK, so telemetry from this one is reported as service.name ""#st.sdk.serviceName#"". Give each application its own copy of lib/ and lib/sdk/, or set OTEL_SERVICE_NAME per JVM." };
+                }
+                if (!structIsEmpty(fallbackWarning)) {
+                    // the no-agent warning is moot once the fallback was requested; this one says what happened
+                    st.diagnostics.warnings = st.diagnostics.warnings.filter(function(w) { return w.code != "NO_OTEL_AGENT"; });
+                    arrayPrepend(st.diagnostics.warnings, fallbackWarning);
+                }
+            }
+        }
+        if (cfg.logDiagnostics) {
+            for (var w in st.diagnostics.warnings) {
+                writeLog(type = w.level == "info" ? "information" : "warning", file = "cfml-otel",
+                    text = "cfml-otel [#w.code#] #w.message#");
+            }
         }
         return this;
+    }
+
+    /** @hint internal: service.name for the fallback SDK when OTEL_SERVICE_NAME isn't set */
+    public string function _defaultServiceName() {
+        if (len(this.__state.config.serviceName)) return this.__state.config.serviceName;
+        try {
+            if (len(application.applicationName)) return application.applicationName;
+        } catch (any ignored) {}
+        return "cfml-app";
+    }
+
+    /** @hint internal: Java Map/List from the bridge -> CFML struct/array (stable serializeJSON on both engines) */
+    public any function _toCfml(required any v) {
+        if (isInstanceOf(arguments.v, "java.util.Map")) {
+            var s = [:];
+            var it = arguments.v.entrySet().iterator();
+            while (it.hasNext()) {
+                var e = it.next();
+                s[e.getKey()] = this._toCfml(e.getValue());
+            }
+            return s;
+        }
+        if (isInstanceOf(arguments.v, "java.util.List")) {
+            var a = [];
+            var it2 = arguments.v.iterator();
+            while (it2.hasNext()) arrayAppend(a, this._toCfml(it2.next()));
+            return a;
+        }
+        return arguments.v;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -75,16 +165,109 @@ component {
         return this.__state.enabled;
     }
 
+    /**
+     * What cfml-otel found at startup. warnings: array of { level (warn|info), code, message }, e.g.
+     * NO_OTEL_AGENT, AGENT_NOT_BRIDGED, OTHER_APM_AGENT, LUCEE_HTTPCLIENT_INSTRUMENTATION (see README).
+     */
     public struct function status() {
         var st = this.__state;
-        return {
-            "enabled": st.enabled,
-            "active": st.active,
-            "agentBridged": st.agentBridged,
-            "bridgeVersion": st.bridgeVersion,
-            "implementation": st.enabled ? st.bridge.implementationClass() : "",
-            "reason": st.reason
-        };
+        var d = st.diagnostics;
+        var s = [:];
+        s["enabled"] = st.enabled;
+        s["active"] = st.active;
+        s["agentBridged"] = st.agentBridged;
+        s["implementation"] = st.enabled ? st.bridge.implementationClass() : "";
+        s["reason"] = st.reason;
+        s["bridgeVersion"] = st.bridgeVersion;
+        for (var k in ["apiVersion", "agentPresent", "agentVersion", "agentPath", "testedAgentVersion", "otherAgents", "jvmAgents"]) {
+            if (structKeyExists(d, k)) s[k] = d[k];
+        }
+        s["warnings"] = duplicate(d.warnings);
+        s["httpMode"] = st.httpMode;
+        s["mode"] = st.mode;
+        s["sdkFallback"] = duplicate(st.sdk);
+        return s;
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Request lifecycle without the agent (sdkFallback): cfml-otel creates the HTTP SERVER span itself.
+    // With the agent these are no-ops apart from scope cleanup, so call them unconditionally.
+    // ------------------------------------------------------------------------------------------
+
+    /**
+     * Call from Application.cfc onRequestStart(). In sdkFallback mode, starts this request's SERVER span
+     * (continuing an incoming traceparent) and makes it current; otherwise does nothing.
+     */
+    public any function onRequestStart() {
+        var st = this.__state;
+        if (!st.enabled || st.mode != "sdk" || structKeyExists(request, "__cfmlotelServer")) return this;
+        try {
+            var req = getPageContext().getRequest();
+            var carrier = {};
+            for (var h in ["traceparent", "tracestate", "baggage"]) {
+                var v = req.getHeader(h);
+                if (!isNull(v)) carrier[h] = v;
+            }
+            var method = uCase(req.getMethod());
+            var route = cgi.script_name;
+            var attrs = [:];
+            attrs["http.request.method"] = method;
+            attrs["http.route"] = route;
+            attrs["url.scheme"] = req.getScheme();
+            attrs["url.path"] = req.getRequestURI();
+            var qs = req.getQueryString();
+            if (!isNull(qs) && len(qs)) attrs["url.query"] = qs;
+            attrs["server.address"] = req.getServerName();
+            attrs["server.port"] = req.getServerPort();
+            attrs["client.address"] = req.getRemoteAddr();
+            var ua = req.getHeader("User-Agent");
+            if (!isNull(ua)) attrs["user_agent.original"] = ua;
+            attrs["network.protocol.version"] = listLast(req.getProtocol(), "/");
+            var s = this.startSpan(method & " " & route, {
+                "kind": "server", "attributes": attrs, "parent": st.bridge.extractContext(carrier) });
+            request.__cfmlotelServer = { "span": s, "token": s.makeCurrent(), "thread": st.jThread.currentThread().getId() };
+        } catch (any e) {
+            // tracing must never break the request
+        }
+        return this;
+    }
+
+    /** @hint internal: ends the fallback SERVER span (status code from the response; 5xx = error) */
+    public void function _endServerSpan() {
+        if (!structKeyExists(request, "__cfmlotelServer")) return;
+        var srv = request.__cfmlotelServer;
+        structDelete(request, "__cfmlotelServer");
+        try {
+            var code = this.__state.bridge.responseStatus(getPageContext().getResponse());
+            if (structKeyExists(srv, "statusCode") && srv.statusCode > 0) code = srv.statusCode;
+            // after an exception, a non-error status only means the app hadn't set one yet: unknown, leave it out
+            else if (structKeyExists(srv, "errorType") && code < 400) code = 0;
+            if (code > 0) {
+                srv.span.setAttribute("http.response.status_code", code);
+                if (code >= 500) {
+                    if (!structKeyExists(srv, "errorType")) srv.span.setAttribute("error.type", toString(code));
+                    srv.span.setStatus("ERROR");
+                }
+            }
+        } catch (any ignored) {
+        } finally {
+            srv.span.end();
+        }
+    }
+
+    /**
+     * Call from Application.cfc onApplicationEnd() (and before stopping an app on purpose). Flushes
+     * pending telemetry and, in sdkFallback mode, shuts the SDK down once no other app uses it.
+     * With the agent it does nothing: the agent flushes on JVM shutdown.
+     */
+    public void function shutdown() {
+        var st = this.__state;
+        if (!st.enabled || st.mode != "sdk") return;
+        try {
+            st.bridge.shutdownSdkFallback();
+        } catch (any ignored) {}
+        st.mode = "noop";
+        st.active = false;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -232,6 +415,116 @@ component {
     }
 
     // ------------------------------------------------------------------------------------------
+    // Outbound HTTP
+    // ------------------------------------------------------------------------------------------
+
+    /**
+     * Trace an outbound HTTP call that fn makes. fn(headers, span) must send `headers` (traceparent etc.)
+     * with the request and should return the cfhttp result, whose status code is then recorded
+     * (4xx/5xx and connection failures mark the span as an error). Returns fn's result.
+     *
+     * Creates a CLIENT span per the HTTP semantic conventions, unless the agent already traces cfhttp
+     * correctly (ACF with the agent's HttpClient instrumentation on; see status().httpMode): then fn
+     * just runs, and `span` is a no-op, so the same code works on every engine without double spans.
+     *
+     * options: method (default GET), urlTemplate (low-cardinality route, e.g. "/orders/{id}": names the
+     *          span "GET /orders/{id}"), name (overrides the span name), attributes (struct)
+     */
+    public any function httpSpan(required string url, required any fn, struct options = {}) {
+        var st = this.__state;
+        var o = arguments.options;
+        var method = structKeyExists(o, "method") && len(o.method) ? o.method : "GET";
+        if (!st.enabled || st.httpMode != "span") {
+            var noop = createObject("component", st.pkg & "Span").init(this, "", "", false, false);
+            var plain = arguments.fn(this.injectHeaders({}), noop);
+            if (!isNull(plain)) return plain;
+            return;
+        }
+        var template = structKeyExists(o, "urlTemplate") ? o.urlTemplate : "";
+        var attrs = this._toCfml(st.bridge.httpClientAttributes(method, arguments.url));
+        if (len(template)) attrs["url.template"] = template;
+        if (structKeyExists(o, "attributes")) structAppend(attrs, o.attributes, true);
+        var name = structKeyExists(o, "name") && len(o.name) ? o.name : st.bridge.httpSpanName(method, template);
+        var s = this.startSpan(name, { "kind": "client", "attributes": attrs });
+        var token = s.makeCurrent();
+        try {
+            var result = arguments.fn(this.injectHeaders({}), s);
+            if (!isNull(result)) {
+                this._recordHttpResult(s, result);
+                return result;
+            }
+        } catch (any e) {
+            s.setAttribute("error.type", len(e.type) ? e.type : "_OTHER");
+            s.recordException(e);
+            s.setStatus("ERROR", e.message);
+            rethrow;
+        } finally {
+            try {
+                this._releaseScope(token);
+            } finally {
+                s.end();
+            }
+        }
+    }
+
+    /**
+     * cfhttp with tracing: httpSpan() around a cfhttp call built from options. Returns the cfhttp result.
+     *
+     * options: method, headers (struct), body (string), params (array of cfhttpparam attribute structs),
+     *          timeout (seconds), cfhttp (struct of any other cfhttp attributes: charset, redirect,
+     *          username, password, throwOnError, getAsBinary, clientCert, proxyServer, ...),
+     *          plus httpSpan()'s urlTemplate, name, attributes
+     */
+    public any function http(required string url, struct options = {}) {
+        var o = arguments.options;
+        var a = structKeyExists(o, "cfhttp") ? duplicate(o.cfhttp) : {};
+        a["url"] = arguments.url;
+        a["method"] = structKeyExists(o, "method") && len(o.method) ? uCase(o.method) : "GET";
+        if (structKeyExists(o, "timeout")) a["timeout"] = o.timeout;
+        var params = structKeyExists(o, "params") ? duplicate(o.params) : [];
+        if (structKeyExists(o, "body")) arrayAppend(params, { "type": "body", "value": o.body });
+        var userHeaders = structKeyExists(o, "headers") ? o.headers : {};
+        var self = this;
+        return this.httpSpan(arguments.url, function(traceHeaders, s) {
+            return self._cfhttp(a, params, userHeaders, traceHeaders);
+        }, o);
+    }
+
+    /** @hint internal: the cfhttp call behind http(). Trace headers win over caller headers of the same name. */
+    public any function _cfhttp(required struct attrs, required array params, required struct headers, required struct traceHeaders) {
+        var h = duplicate(arguments.headers);
+        for (var k in arguments.traceHeaders) {
+            for (var existing in structKeyArray(h)) {
+                if (existing != k && compareNoCase(existing, k) == 0) structDelete(h, existing);
+            }
+            h[k] = arguments.traceHeaders[k];
+        }
+        cfhttp(attributeCollection = arguments.attrs, result = "local.res") {
+            for (var hk in h) cfhttpparam(type = "header", name = hk, value = h[hk]);
+            for (var p in arguments.params) cfhttpparam(attributeCollection = p);
+        }
+        return local.res;
+    }
+
+    /** @hint internal: status code / error onto a CLIENT span from a cfhttp result */
+    public void function _recordHttpResult(required any span, required any result) {
+        if (!isStruct(arguments.result)) return;
+        var r = arguments.result;
+        var raw = structKeyExists(r, "statusCode") ? r.statusCode : (structKeyExists(r, "status_code") ? r.status_code : "");
+        var code = this.__state.bridge.httpStatusCode(raw);
+        if (code > 0) {
+            arguments.span.setAttribute("http.response.status_code", code);
+            if (code >= 400) {
+                arguments.span.setAttribute("error.type", toString(code));
+                arguments.span.setStatus("ERROR");
+            }
+        } else if (structKeyExists(r, "errorDetail") && len(trim(r.errorDetail))) {
+            arguments.span.setAttribute("error.type", "_OTHER");
+            arguments.span.setStatus("ERROR", r.errorDetail);
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
     // Scope tracking. A Scope left open on a pooled request thread leaks the span into later,
     // unrelated requests, so every scope this library opens is registered per thread and
     // onRequestEnd() closes whatever is left ON THE CALLING THREAD. Scopes can only be closed by the
@@ -289,26 +582,71 @@ component {
     }
 
     /**
-     * Call from Application.cfc onRequestEnd(). Closes leaked scopes on this thread; returns how many.
-     * Also safe to call at the end of a cfthread/runAsync body that used makeCurrent() directly.
+     * Call from Application.cfc onRequestEnd(). Closes leaked scopes on this thread (returns how many) and,
+     * in sdkFallback mode, ends the request's SERVER span (only on the thread that started it).
      */
     public numeric function onRequestEnd() {
         var st = this.__state;
         if (!st.enabled) return 0;
-        var closed = this._closeScopes(this._threadRegistry());
-        if (closed && st.config.logLeakedScopes) {
-            writeLog(type = "warning", file = "cfml-otel",
-                text = "cfml-otel closed #closed# leaked OpenTelemetry scope(s) at request end (trace #this.traceId()#)");
+        var closed = this.closeLeakedScopes("at request end");
+        var srv = this._serverOnThisThread();
+        if (!structIsEmpty(srv)) {
+            var reg = this._threadRegistry();
+            if (structKeyExists(reg, srv.token)) this._closeScopes(reg, reg[srv.token].seq);
+            this._endServerSpan();
         }
         return closed;
     }
 
-    /** Call from Application.cfc onError(). Marks the current span as failed and cleans up scopes. */
-    public void function onError(required any exception) {
+    /**
+     * Close the scopes left open on this thread, innermost first; returns how many. Call it at the end of a
+     * cfthread/runAsync body that used makeCurrent() directly. Never closes the sdkFallback SERVER scope.
+     */
+    public numeric function closeLeakedScopes(string when = "") {
+        var st = this.__state;
+        if (!st.enabled) return 0;
+        var reg = this._threadRegistry();
+        var srv = this._serverOnThisThread();
+        var minSeq = (!structIsEmpty(srv) && structKeyExists(reg, srv.token)) ? reg[srv.token].seq + 1 : 0;
+        var closed = this._closeScopes(reg, minSeq);
+        if (closed && st.config.logLeakedScopes) {
+            writeLog(type = "warning", file = "cfml-otel",
+                text = "cfml-otel closed #closed# leaked OpenTelemetry scope(s)#len(arguments.when) ? ' ' & arguments.when : ''# (trace #this.traceId()#)");
+        }
+        return closed;
+    }
+
+    /** @hint internal: the sdkFallback SERVER span record if this thread started it, else {} */
+    public struct function _serverOnThisThread() {
+        if (!structKeyExists(request, "__cfmlotelServer")) return {};
+        var srv = request.__cfmlotelServer;
+        return srv.thread == this.__state.jThread.currentThread().getId() ? srv : {};
+    }
+
+    /**
+     * Call from Application.cfc onError(). Marks the current span as failed and cleans up scopes.
+     * Neither engine runs onRequestEnd() after onError(), so in sdkFallback mode this also ends the SERVER
+     * span: set the response status (cfheader statuscode=...) BEFORE calling it, or pass statusCode.
+     */
+    public void function onError(required any exception, numeric statusCode = 0) {
         if (!this.__state.enabled) return;
         var err = arguments.exception;
         // onError wraps the real error in a struct with a rootCause key on both engines
         if (isStruct(err) && structKeyExists(err, "rootCause")) err = err.rootCause;
+        var srv = this._serverOnThisThread();
+        if (!structIsEmpty(srv)) {
+            // the request thread's fallback SERVER span: record here, then end it (nothing else will)
+            try {
+                srv.span.recordException(err);
+                var et = isStruct(err) && structKeyExists(err, "type") && len(err.type) ? err.type : "_OTHER";
+                srv.span.setAttribute("error.type", et);
+                srv.span.setStatus("ERROR", isStruct(err) && structKeyExists(err, "message") ? err.message : "");
+                srv.errorType = et;
+                if (arguments.statusCode > 0) srv.statusCode = arguments.statusCode;
+            } catch (any ignored) {}
+            this.onRequestEnd();
+            return;
+        }
         this.onRequestEnd();
         try {
             var s = this.currentSpan();

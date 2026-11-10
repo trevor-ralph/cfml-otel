@@ -22,9 +22,24 @@ component {
             "meterName": "",
             "loggerName": "",
             "logLeakedScopes": true,
+            "logDiagnostics": true,
+            "cfhttpSpans": "auto",
+            // No javaagent: run cfml-otel's own SDK (add lib/sdk/ to loadPaths too). See README "Without the agent".
+            "sdkFallback": false,
+            "serviceName": "",
             // Tag the agent's SERVER span with coldbox.event / coldbox.route attributes
             "traceEvents": true
         };
+
+        // ColdBox merges an app's overrides from moduleSettings["cfmlotel"] (this module's modelNamespace) after
+        // configure(). Also accept moduleSettings["cfml-otel"], the module's folder name, which the 0.1.0 README
+        // documented; "cfmlotel" wins where both set a key.
+        try {
+            var appModuleSettings = controller.getConfigSettings().coldboxConfig.getPropertyMixin("moduleSettings", "variables", {});
+            if (structKeyExists(appModuleSettings, "cfml-otel") && isStruct(appModuleSettings["cfml-otel"])) {
+                structAppend(settings, appModuleSettings["cfml-otel"], true);
+            }
+        } catch (any ignored) {}
 
         interceptors = [
             { class: "#moduleMapping#.interceptors.RequestLifecycle", name: "RequestLifecycle@cfmlotel" }

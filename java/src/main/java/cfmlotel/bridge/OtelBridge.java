@@ -58,6 +58,9 @@ public final class OtelBridge {
 
   public static final String VERSION = "0.1.0";
 
+  /** The javaagent release the integration tests run against (build.sh AGENT_VERSION). */
+  public static final String TESTED_AGENT_VERSION = "2.33.1";
+
   private static final AtomicLong SCOPE_SEQ = new AtomicLong();
 
   private OtelBridge() {}
@@ -70,28 +73,138 @@ public final class OtelBridge {
     return VERSION;
   }
 
+  /**
+   * Startup self-check for CFML: versions, attached agents, and warnings (each {level, code, message})
+   * explaining why nothing would be recorded or what is misconfigured. engine: "lucee" or "acf".
+   */
+  public static Map<String, Object> diagnostics(String engine) {
+    return Diagnostics.report(Diagnostics.gather(engine));
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Outbound HTTP (stable HTTP semantic conventions)
+  // ------------------------------------------------------------------------------------------
+
+  /**
+   * True when the javaagent is recording and its Apache HttpClient instrumentation is on, i.e. it creates
+   * CLIENT spans for cfhttp by itself (correctly on ACF; on Lucee they start orphan traces, LDEV-6519).
+   */
+  public static boolean agentTracesHttpClient() {
+    return isAgentBridged() && isActive() && Diagnostics.httpClientInstrumentationOn(Diagnostics::config);
+  }
+
+  /** http.request.method, server.address, server.port and url.full (credentials and signatures redacted). */
+  public static Map<String, Object> httpClientAttributes(String method, String url) {
+    return HttpClientSemconv.attributes(method, url);
+  }
+
+  public static String httpSpanName(String method, String urlTemplate) {
+    return HttpClientSemconv.spanName(method, urlTemplate);
+  }
+
+  /** Leading status code of a cfhttp statusCode such as "404 Not Found"; 0 when there is none. */
+  public static int httpStatusCode(Object statusCode) {
+    return HttpClientSemconv.statusCode(statusCode);
+  }
+
   /** Strictly increasing, process-wide: orders scopes so they can be closed innermost-first. */
   public static long nextScopeSeq() {
     return SCOPE_SEQ.incrementAndGet();
   }
 
+  /**
+   * The SDK cfml-otel started itself (sdkFallback), typed as the API interface so this class never needs the
+   * SDK jars on the classpath. Null unless the fallback is running.
+   */
+  private static volatile OpenTelemetry fallback;
+
+  /** What every call goes through: the fallback SDK when it runs, else GlobalOpenTelemetry (the agent's). */
+  static OpenTelemetry otel() {
+    OpenTelemetry f = fallback;
+    return f != null ? f : GlobalOpenTelemetry.get();
+  }
+
+  static void setFallback(OpenTelemetry sdk) {
+    fallback = sdk;
+  }
+
   public static Object openTelemetry() {
-    return GlobalOpenTelemetry.get();
+    return otel();
+  }
+
+  /** True while cfml-otel's own SDK (sdkFallback) is the implementation. */
+  public static boolean isSdkFallback() {
+    return fallback != null;
   }
 
   /** Class name of the active OpenTelemetry implementation (diagnostics). */
   public static String implementationClass() {
-    return GlobalOpenTelemetry.get().getClass().getName();
+    return otel().getClass().getName();
   }
 
   /** True when GlobalOpenTelemetry is the javaagent's bridge into its SDK. */
   public static boolean isAgentBridged() {
-    return implementationClass().startsWith("io.opentelemetry.javaagent.");
+    return GlobalOpenTelemetry.get().getClass().getName().startsWith("io.opentelemetry.javaagent.");
+  }
+
+  /** True when the OTel javaagent is attached to this JVM (bridged or not). */
+  public static boolean isAgentAttached() {
+    return Diagnostics.gather("").otelAgentPresent;
+  }
+
+  /**
+   * Start cfml-otel's own SDK (opt-in sdkFallback). Configured from the standard OTEL_* environment
+   * variables / otel.* system properties; {@code defaults} only fills in what those leave unset.
+   * Needs the jars in lib/sdk/. Returns {started, shared, serviceName, error}.
+   */
+  public static Map<String, Object> startSdkFallback(Map<?, ?> defaults) {
+    try {
+      return SdkFallback.start(defaults);
+    } catch (LinkageError e) {
+      Map<String, Object> r = new HashMap<>();
+      r.put("started", false);
+      r.put("shared", false);
+      r.put("serviceName", "");
+      r.put("error", "the SDK jars are not on the classpath (add cfml-otel/lib/sdk/ to this.javaSettings.loadPaths): " + e);
+      return r;
+    }
+  }
+
+  /** Flush the fallback SDK; shut it down once no application that started or reused it is left. */
+  public static void shutdownSdkFallback() {
+    if (fallback != null) SdkFallback.release();
+  }
+
+  /** Flush the fallback SDK's pending spans, metrics and logs (no-op otherwise). */
+  public static void flushSdkFallback() {
+    if (fallback != null) SdkFallback.flush();
+  }
+
+  /**
+   * HTTP status of a servlet response, unwrapping engine wrappers that don't track it (ACF's
+   * getPageContext().getResponse() reports 0; the real one is a few getResponse() calls down). 0 if unknown.
+   */
+  public static int responseStatus(Object response) {
+    Object r = response;
+    for (int depth = 0; r != null && depth < 8; depth++) {
+      try {
+        Object s = r.getClass().getMethod("getStatus").invoke(r);
+        if (s instanceof Integer && (Integer) s > 0) return (Integer) s;
+      } catch (ReflectiveOperationException | RuntimeException ignored) {
+        // not a status-tracking response
+      }
+      try {
+        r = r.getClass().getMethod("getResponse").invoke(r);
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        return 0;
+      }
+    }
+    return 0;
   }
 
   /** True when spans created through the API would actually be recorded/propagated. */
   public static boolean isActive() {
-    Span probe = GlobalOpenTelemetry.get().getTracer("cfml-otel.probe").spanBuilder("probe").startSpan();
+    Span probe = otel().getTracer("cfml-otel.probe").spanBuilder("probe").startSpan();
     boolean valid = probe.getSpanContext().isValid();
     // Never end the probe span: an un-ended span is not exported.
     return valid;
@@ -102,7 +215,7 @@ public final class OtelBridge {
   // ------------------------------------------------------------------------------------------
 
   public static Object tracer(String name, String version) {
-    OpenTelemetry otel = GlobalOpenTelemetry.get();
+    OpenTelemetry otel = otel();
     return isBlank(version) ? otel.getTracer(name) : otel.getTracer(name, version);
   }
 
@@ -281,13 +394,13 @@ public final class OtelBridge {
   public static Map<String, String> injectHeaders(Object context) {
     Context ctx = context instanceof Context ? (Context) context : Context.current();
     Map<String, String> headers = new HashMap<>();
-    GlobalOpenTelemetry.getPropagators().getTextMapPropagator().inject(ctx, headers, MAP_SETTER);
+    otel().getPropagators().getTextMapPropagator().inject(ctx, headers, MAP_SETTER);
     return headers;
   }
 
   /** Extract a remote parent context from inbound headers (case-insensitive keys). */
   public static Object extractContext(Map<?, ?> headers) {
-    return GlobalOpenTelemetry.getPropagators().getTextMapPropagator()
+    return otel().getPropagators().getTextMapPropagator()
         .extract(Context.current(), headers, MAP_GETTER);
   }
 
@@ -296,7 +409,7 @@ public final class OtelBridge {
   // ------------------------------------------------------------------------------------------
 
   public static Object meter(String name, String version) {
-    OpenTelemetry otel = GlobalOpenTelemetry.get();
+    OpenTelemetry otel = otel();
     return isBlank(version)
         ? otel.getMeter(name)
         : otel.meterBuilder(name).setInstrumentationVersion(version).build();
@@ -353,7 +466,7 @@ public final class OtelBridge {
   // ------------------------------------------------------------------------------------------
 
   public static Object logger(String name) {
-    return GlobalOpenTelemetry.get().getLogsBridge().get(name);
+    return otel().getLogsBridge().get(name);
   }
 
   /** Emit a log record correlated with the current span. severity: TRACE|DEBUG|INFO|WARN|ERROR|FATAL. */

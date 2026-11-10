@@ -28,6 +28,7 @@ class Target:
     port: int          # port inside the compose network
     local_port: int    # port published on the host
     service: str       # OTEL_SERVICE_NAME
+    sdk: bool = False  # no javaagent: cfml-otel's own SDK (sdkFallback)
 
     @property
     def base(self) -> str:
@@ -37,12 +38,19 @@ class Target:
     def is_acf(self) -> bool:
         return self.name.startswith("acf")
 
+    @property
+    def db(self) -> bool:
+        """cfquery checks need SQL Server (MSSQL=1) and the agent's JDBC instrumentation."""
+        return MSSQL and not self.sdk
+
 
 TARGETS = {
     "lucee7": Target("lucee7", "lucee7", 8888, 8971, "cfml-otel-lucee7"),
     "lucee6": Target("lucee6", "lucee6", 8888, 8961, "cfml-otel-lucee6"),
     "acf2025": Target("acf2025", "acf2025", 8500, 8951, "cfml-otel-acf2025"),
     "acf2023": Target("acf2023", "acf2023", 8500, 8941, "cfml-otel-acf2023"),
+    "lucee7-sdk": Target("lucee7-sdk", "lucee7-sdk", 8888, 8972, "cfml-otel-lucee7-sdk", sdk=True),
+    "acf2025-sdk": Target("acf2025-sdk", "acf2025-sdk", 8500, 8952, "cfml-otel-acf2025-sdk", sdk=True),
 }
 
 GRAFANA = os.environ.get("GRAFANA_URL") or ("http://localhost:3000" if LOCAL else "http://lgtm:3000")
@@ -160,6 +168,7 @@ class Span:
     status: str
     attrs: dict
     events: list[dict] = field(default_factory=list)   # [{"name":..., "attrs": {...}}]
+    scope: str = ""                                     # instrumentation scope (tracer) name
 
     def event_attr(self, event: str, key: str) -> list:
         return [e["attrs"].get(key) for e in self.events if e["name"] == event]
@@ -181,6 +190,7 @@ def spans(trace_id: str) -> list[Span]:
                             id=_b64_hex(sp.get("spanId")), parent=_b64_hex(sp.get("parentSpanId")),
                             status=sp.get("status", {}).get("code", ""), attrs=_attrs(sp.get("attributes")),
                             events=[{"name": e.get("name"), "attrs": _attrs(e.get("attributes"))} for e in sp.get("events", [])],
+                            scope=ss.get("scope", {}).get("name", ""),
                         ))
         _trace_cache[trace_id] = out
     return _trace_cache[trace_id]
@@ -218,6 +228,7 @@ class Run:
     leak_bad: int
     coldbox: dict
     started: datetime
+    fail: dict = field(default_factory=dict)   # unhandled-error request: trace id, parent id, HTTP status
 
     @property
     def scenarios(self) -> dict:
@@ -231,7 +242,11 @@ def drive(t: Target) -> Run:
     started = datetime.now(timezone.utc) - timedelta(minutes=5)
     app = f"{t.base}/cfml-otel/tests/app"
     trace_id, parent_id = hex_id(16), hex_id(8)
-    response = get_json(f"{app}/scenarios.cfm?reinit=1&db={1 if MSSQL else 0}", traceparent(trace_id, parent_id))
+    response = get_json(f"{app}/scenarios.cfm?reinit=1&db={1 if t.db else 0}", traceparent(trace_id, parent_id))
+
+    # Unhandled error through Application.cfc onError()
+    fail = {"T": hex_id(16), "P": hex_id(8)}
+    fail["status"] = http(f"{app}/fail.cfm", traceparent(fail["T"], fail["P"]))[0]
 
     # Leak protection: leak a scope, then hammer the pool and make sure nobody inherits it
     get_json(f"{app}/leak.cfm")
@@ -259,4 +274,4 @@ def drive(t: Target) -> Run:
     except Exception as e:  # reported by the ColdBox tests, not a crash of the whole run
         cb["error"] = f"{type(e).__name__}: {e}"
 
-    return Run(t, trace_id, parent_id, response, leak_bad, cb, started)
+    return Run(t, trace_id, parent_id, response, leak_bad, cb, started, fail)

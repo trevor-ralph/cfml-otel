@@ -13,15 +13,22 @@ def cb(run) -> dict:
     return run.coldbox
 
 
-def test_module_activated_injected_and_bridged(cb):
+def test_module_activated_injected_and_bridged(run, cb):
     s = cb["index"]["status"]
-    assert s["active"] and s["agentBridged"], s
+    assert s["active"] and s["mode"] == ("sdk" if run.target.sdk else "agent"), s
 
 
 def test_interceptor_tags_the_server_span(cb):
     server = harness.server_span(cb["T"], cb["P"])
     assert server is not None
     assert server.attrs.get("coldbox.event") == "main.index", server.attrs
+
+
+def test_app_module_settings_override_the_defaults(run, cb):
+    # moduleSettings["cfmlotel"] sets the tracer name; moduleSettings["cfml-otel"] sets sdkFallback (sdk engines)
+    handler = next(s for s in harness.spans(cb["T"]) if s.name == "cb.handler")
+    assert handler.scope == "cfml-otel-coldbox-tests", handler.scope
+    assert cb["index"]["status"]["mode"] == ("sdk" if run.target.sdk else "agent")
 
 
 def test_handler_span_nests_under_the_server_span(cb):

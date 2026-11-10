@@ -25,6 +25,39 @@
       <version>${otel.api.version}</version>
       <scope>provided</scope>
     </dependency>
+    <!-- SDK fallback (opt-in, sdkFallback): copied to lib/sdk/ by build.sh, loaded only when an app adds it.
+         No OkHttp/Kotlin and no JDK sender (ACF's Java runtime has no java.net.http): the bridge's own
+         UrlConnectionHttpSender is the OTLP/HTTP sender. Same version as the API. -->
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk</artifactId>
+      <version>${otel.api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk-extension-autoconfigure</artifactId>
+      <version>${otel.api.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+      <version>${otel.api.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>io.opentelemetry</groupId>
+          <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.13.4</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -37,6 +70,29 @@
         <configuration>
           <compilerArgs><arg>-Xlint:all</arg></compilerArgs>
         </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.3</version>
+      </plugin>
+      <plugin>
+        <!-- target/sdk/: the SDK fallback's jars (everything provided except the API jars lib/ already has) -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <id>sdk-jars</id>
+            <phase>package</phase>
+            <goals><goal>copy-dependencies</goal></goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/sdk</outputDirectory>
+              <includeScope>provided</includeScope>
+              <excludeArtifactIds>opentelemetry-api,opentelemetry-context,opentelemetry-common</excludeArtifactIds>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
