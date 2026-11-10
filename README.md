@@ -317,7 +317,8 @@ In `agent` mode the agent's span is used as it is: the `span` argument is a no-o
 `attributes` are ignored. Put attributes you need on every engine on an enclosing `otel.span()`.
 
 Tested on all four engines: GET/POST with headers and body, 404, connection failure, and that the downstream
-request continues the trace from the client span. ACF in `span` mode was tested on ACF 2025 only.
+request continues the trace from the client span. CI also runs ACF 2025 with the agent's HttpClient
+instrumentation off, which covers `span` mode on ACF.
 
 ### Database queries (cfquery)
 

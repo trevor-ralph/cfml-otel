@@ -29,15 +29,16 @@ def _the_client_span(run, wrapper: str) -> harness.Span:
 
 
 def test_http_mode_matches_the_engine(run):
-    # ACF: the agent's HttpClient instrumentation is on and correct, so the helpers leave the span to it.
-    # Lucee: always the helper's own span (the agent's spans start orphan traces there, LDEV-6519).
-    assert run.response["status"]["httpMode"] == ("agent" if run.target.is_acf and not run.target.sdk else "span")
+    # ACF with the agent's HttpClient instrumentation on (it traces cfhttp correctly there): the helpers leave
+    # the span to the agent. Lucee, ACF with that instrumentation off (acf2025-nohttp), no agent: the helper's span.
+
+    assert run.response["status"]["httpMode"] == ("agent" if run.target.agent_traces_cfhttp else "span")
 
 
 @pytest.mark.parametrize("wrapper", ["s21.wrap", "s22.wrap", "s23.wrap", "s24.wrap"])
 def test_one_client_span_per_call(run, wrapper):
     s = _the_client_span(run, wrapper)
-    agent_mode = run.target.is_acf and not run.target.sdk
+    agent_mode = run.target.agent_traces_cfhttp
     assert s.scope.startswith("io.opentelemetry.apache-httpclient") if agent_mode else s.scope == "cfml-otel-tests", s.scope
 
 
@@ -49,7 +50,7 @@ def test_httpspan_attributes_and_name(run):
     assert s.attrs["url.full"].endswith("/echo.cfm")
     assert s.attrs["http.response.status_code"] == 200
     assert s.status != "STATUS_CODE_ERROR"
-    if not (run.target.is_acf and not run.target.sdk):
+    if not run.target.agent_traces_cfhttp:
         assert s.name == "GET /echo.cfm" and s.attrs["url.template"] == "/echo.cfm"
 
 

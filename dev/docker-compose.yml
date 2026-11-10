@@ -1,7 +1,7 @@
 # Dev / integration stack. The host only needs Docker; run everything from this directory:
 #
 #   docker compose run --rm build                      # lib/ (bridge + OTel API jars), the javaagent, ColdBox
-#   docker compose up -d lgtm lucee7 lucee6 acf2025 acf2023     # + lucee7-sdk acf2025-sdk: no javaagent
+#   docker compose up -d lgtm lucee7 lucee6 acf2025 acf2023     # + lucee7-sdk acf2025-sdk (no javaagent), acf2025-nohttp
 #   docker compose run --rm tests                      # pytest; ENGINES=lucee7,acf2023 to pick engines
 #
 # The repo is mounted read-only under each engine's web root at /cfml-otel. Tests live in tests/app (plain
@@ -83,6 +83,18 @@ services:
     volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
               "./jdbc/mssql-jdbc.jar:/opt/coldfusion/cfusion/lib/mssql-jdbc.jar:ro"]   # Microsoft driver for the "Other" datasource
 
+  # ACF with the agent, but its HttpClient instrumentation off (as some ACF setups run, e.g. to match Lucee):
+  # httpSpan() / http() must switch to creating the CLIENT span themselves ("span" mode)
+  acf2025-nohttp:
+    image: adobecoldfusion/coldfusion2025:2025.0.14
+    depends_on: [lgtm]
+    ports: ["8953:8500"]
+    environment:
+      <<: [*otel-env, *mssql-env, *acf-env]
+      OTEL_SERVICE_NAME: "cfml-otel-acf2025-nohttp"
+      OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED: "false"
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+
   acf2023:
     image: adobecoldfusion/coldfusion2023:2023.0.26
     depends_on: [lgtm]
@@ -130,7 +142,7 @@ services:
     profiles: ["tools"]
     build: ../tests/integration
     environment:
-      ENGINES: "${ENGINES:-lucee7,lucee6,acf2025,acf2023}"   # also: lucee7-sdk, acf2025-sdk
+      ENGINES: "${ENGINES:-lucee7,lucee6,acf2025,acf2023}"   # also: lucee7-sdk, acf2025-sdk, acf2025-nohttp
       MSSQL: "${MSSQL:-1}"         # 0 skips the SQL Server checks (ARM, or no mssql service)
       GRAFANA_URL: "http://lgtm:3000"
     volumes: ["../tests/results:/results"]

@@ -30,6 +30,8 @@ jobs:
           - { engine: lucee6,  arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: acf2025, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: acf2023, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
+          # ACF with the agent but its HttpClient instrumentation off: the HTTP helpers' "span" mode on ACF
+          - { engine: acf2025-nohttp, arch: x64, runner: ubuntu-latest, mssql: "0" }
           - { engine: lucee7,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
           - { engine: lucee6,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
           # No javaagent: cfml-otel's own SDK (sdkFallback); no JDBC tracing, so no SQL Server

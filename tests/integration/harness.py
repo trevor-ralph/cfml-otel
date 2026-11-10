@@ -29,6 +29,7 @@ class Target:
     local_port: int    # port published on the host
     service: str       # OTEL_SERVICE_NAME
     sdk: bool = False  # no javaagent: cfml-otel's own SDK (sdkFallback)
+    agent_http: bool = True  # the agent's Apache HttpClient instrumentation is on (OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED)
 
     @property
     def base(self) -> str:
@@ -43,6 +44,12 @@ class Target:
         """cfquery checks need SQL Server (MSSQL=1) and the agent's JDBC instrumentation."""
         return MSSQL and not self.sdk
 
+    @property
+    def agent_traces_cfhttp(self) -> bool:
+        """The agent makes cfhttp's CLIENT spans itself (ACF with its HttpClient instrumentation on): the
+        helpers' "agent" mode. Everywhere else they make the span ("span" mode)."""
+        return self.is_acf and not self.sdk and self.agent_http
+
 
 TARGETS = {
     "lucee7": Target("lucee7", "lucee7", 8888, 8971, "cfml-otel-lucee7"),
@@ -51,6 +58,7 @@ TARGETS = {
     "acf2023": Target("acf2023", "acf2023", 8500, 8941, "cfml-otel-acf2023"),
     "lucee7-sdk": Target("lucee7-sdk", "lucee7-sdk", 8888, 8972, "cfml-otel-lucee7-sdk", sdk=True),
     "acf2025-sdk": Target("acf2025-sdk", "acf2025-sdk", 8500, 8952, "cfml-otel-acf2025-sdk", sdk=True),
+    "acf2025-nohttp": Target("acf2025-nohttp", "acf2025-nohttp", 8500, 8953, "cfml-otel-acf2025-nohttp", agent_http=False),
 }
 
 GRAFANA = os.environ.get("GRAFANA_URL") or ("http://localhost:3000" if LOCAL else "http://lgtm:3000")
