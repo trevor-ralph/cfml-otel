@@ -11,7 +11,7 @@ attributes, metrics, OTel logs correlated with the trace, and context propagatio
 `runAsync` and message boundaries. Everything goes to the agent's SDK and exporters, so you ship
 OTLP to a Collector / Grafana Alloy and on to Tempo, Loki and Mimir/Prometheus (or any OTLP backend).
 
-> Status: **0.1.0 scaffold**. Integration-tested (135 checks, plain CFML and ColdBox 8.3) on Lucee 7.0.6,
+> Status: **0.1.0 scaffold**. Integration-tested (plain CFML, ColdBox 8.3, SQL Server 2022) on Lucee 7.0.6,
 > Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26 with agent 2.33.1 — see [Testing](#testing).
 
 ```cfml
@@ -214,12 +214,36 @@ driver, ACF's built-in "Microsoft SQL Server" driver):
 still traced, with correct SQL, operation, table and nesting. But `db.system` is `other_sql` instead of
 `mssql`, and `server.address`, `server.port` and `db.name` are missing. So Grafana's service graph and
 database views can't tell which SQL Server a query went to. Lucee (Microsoft's driver,
-`jdbc:sqlserver://`) is unaffected. Options:
-- Accept it: the SQL, timings and errors are all there.
-- Configure the datasource with Microsoft's JDBC driver as an "Other" driver (`jdbc:sqlserver://...`),
-  which the agent parses fully.
-- The real fix is upstream, in the agent's
-  [JDBC URL parser](https://github.com/open-telemetry/opentelemetry-java-instrumentation).
+`jdbc:sqlserver://`) is unaffected.
+
+**Workaround (tested on ACF 2025 and 2023): use Microsoft's JDBC driver as an "Other" datasource.**
+The agent then records `db.system=mssql`, `server.address`, `server.port` and `db.name` as on Lucee.
+1. Put Microsoft's driver (`com.microsoft.sqlserver:mssql-jdbc`, the `.jre11` build) in
+   `cfusion/lib/` and restart ColdFusion. ACF's `sqlserver` package doesn't include it; it only has
+   Adobe's DataDirect driver.
+2. Create the datasource with driver **Other**, class `com.microsoft.sqlserver.jdbc.SQLServerDriver`,
+   and a URL like `jdbc:sqlserver://dbhost:1433;databaseName=mydb`. Or in `Application.cfc`:
+
+   ```cfml
+   this.datasources["mydb"] = {
+       driver: "other", class: "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+       url: "jdbc:sqlserver://dbhost:1433;databaseName=mydb", username: "...", password: "..."
+   };
+   ```
+
+It is a different driver, so check before switching production datasources:
+- **Encryption:** since version 10, Microsoft's driver encrypts by default and validates the server
+  certificate. Set `encrypt=false` or `trustServerCertificate=true` if your server isn't set up for that.
+  The tests use `encrypt=false`.
+- **Unicode:** it sends string parameters as Unicode (`sendStringParametersAsUnicode=true`) by default,
+  which can affect index use on `VARCHAR` columns.
+- **Behaviour:** ACF-specific advanced settings for the built-in driver don't apply. The tests only cover
+  plain queries with `cfqueryparam`, not stored procedures or every SQL type.
+
+Leaving the built-in driver as it is also fine: the SQL, timings and errors are all traced. The proper
+fix belongs in the agent's
+[JDBC URL parser](https://github.com/open-telemetry/opentelemetry-java-instrumentation): registering ACF's
+`macromedia` prefix with the existing DataDirect parser.
 
 Wrap a group of queries in `otel.span("orders.load", ...)` to see them as one unit of work.
 

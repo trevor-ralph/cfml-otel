@@ -29,6 +29,13 @@ component {
             "driver": "MSSQLServer", "host": variables.dbHost, "port": 1433, "database": "master",
             "username": "sa", "password": variables.dbPassword
         };
+        // The workaround for the built-in driver's missing db identity (README "Database queries"):
+        // Microsoft's JDBC driver (dev/jdbc/mssql-jdbc.jar, in cfusion/lib) as an "Other" datasource
+        this.datasources["cfmlotel_mssql_msdriver"] = {
+            "driver": "other", "class": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+            "url": "jdbc:sqlserver://#variables.dbHost#:1433;databaseName=master;encrypt=false",
+            "username": "sa", "password": variables.dbPassword
+        };
     }
 
     // 2. One facade per application

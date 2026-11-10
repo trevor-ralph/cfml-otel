@@ -76,7 +76,8 @@ services:
     environment:
       <<: [*otel-env, *mssql-env, *acf-env]
       OTEL_SERVICE_NAME: "cfml-otel-acf2025"
-    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/mssql-jdbc.jar:/opt/coldfusion/cfusion/lib/mssql-jdbc.jar:ro"]   # Microsoft driver for the "Other" datasource
 
   acf2023:
     image: adobecoldfusion/coldfusion2023:2023.0.26
@@ -89,7 +90,8 @@ services:
       # Turning off JVM container detection avoids that code path. ACF sets -Xmx explicitly, so nothing is lost.
       JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar -XX:-UseContainerSupport"
       OTEL_SERVICE_NAME: "cfml-otel-acf2023"
-    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/mssql-jdbc.jar:/opt/coldfusion/cfusion/lib/mssql-jdbc.jar:ro"]   # Microsoft driver for the "Other" datasource
 
   # ---- tools: started only by `docker compose run --rm <name>` -------------------------------------
   build:

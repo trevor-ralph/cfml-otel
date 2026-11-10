@@ -194,6 +194,22 @@ def test_cfquery_spans_identify_sql_server(run, named):
     assert all(s.attrs.get("server.address") == "mssql" for s in kids), [s.attrs for s in kids]
 
 
+@needs_mssql
+def test_cfquery_acf_microsoft_driver_identifies_sql_server(run, named):
+    """The workaround for ACF's built-in driver: Microsoft's JDBC driver as an "Other" datasource."""
+    if not run.target.is_acf:
+        pytest.skip("ACF only (Lucee already uses Microsoft's driver)")
+    q = run.value("cfqueryMsDriver")
+    assert q and q["rows"] == 1 and q["name"] == "first", run.scenarios.get("cfqueryMsDriver")
+    db = named["s19.db-msdriver"]
+    kids = [s for s in harness.spans(run.trace_id) if s.parent == db.id and s.kind == "SPAN_KIND_CLIENT"]
+    assert kids, "no JDBC spans under s19.db-msdriver"
+    for s in kids:
+        assert _db_attr(s, "db.system.name", "db.system") == "mssql", s.attrs
+        assert s.attrs.get("server.address") == "mssql" and s.attrs.get("server.port") == 1433, s.attrs
+        assert _db_attr(s, "db.namespace", "db.name") == "master", s.attrs
+
+
 # ---- metrics and logs -------------------------------------------------------------------------------
 
 def test_metrics_long_instruments_round_doubles_keep_fractions(run):

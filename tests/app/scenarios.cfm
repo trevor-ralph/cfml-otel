@@ -240,6 +240,18 @@ if (!structKeyExists(url, "db") || url.db != 0) {
             return { "spanId": s.getSpanId(), "rows": q.recordCount, "name": q.name[1] };
         });
     });
+
+    // ACF only: the same query through Microsoft's JDBC driver as an "Other" datasource, the workaround for
+    // the built-in driver's jdbc:macromedia: URLs that the agent can't parse
+    if (!structKeyExists(server, "lucee")) {
+        scenario("cfqueryMsDriver", function() {
+            return otel.span("s19.db-msdriver", function(s) {
+                var q = queryExecute("SELECT name FROM dbo.cfmlotel_items WHERE id = :id",
+                    { "id": { "value": 1, "cfsqltype": "cf_sql_integer" } }, { "datasource": "cfmlotel_mssql_msdriver" });
+                return { "spanId": s.getSpanId(), "rows": q.recordCount, "name": q.name[1] };
+            });
+        });
+    }
 }
 
 cfcontent(type = "application/json", reset = true);
