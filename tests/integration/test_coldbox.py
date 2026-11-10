@@ -46,10 +46,41 @@ def test_onexception_records_the_error_on_the_server_span(cb):
     assert cb["fail_status"] == 500
     assert server is not None and server.status == "STATUS_CODE_ERROR"
     assert any("Custom.CbFail" in (t or "") for t in server.event_attr("exception", "exception.type")), server.events
+    # ColdBox sets the 500 only after announcing onException, which is where the sdkFallback SERVER span ends
+    assert server.attrs.get("http.response.status_code") == 500, server.attrs
 
 
 def test_scopes_leaked_by_events_are_closed(cb):
     assert cb["bad"] == 0, f"{cb['bad']} of 30 pooled requests inherited a stale trace"
+
+
+def test_handler_abort_is_cleaned_up_by_onabort(cb):
+    assert cb["abort_status"] == 200, cb["abort_status"]
+    assert harness.server_span(cb["AT"], cb["AP"]) is not None, [s.name for s in harness.spans(cb["AT"])]
+    assert cb["abort_bad"] == 0, f"{cb['abort_bad']} of 30 pooled requests inherited the aborted request's trace"
+
+
+def _relocate_span(trace_id: str, parent_id: str):
+    """The ColdBox request's SERVER span (the followed redirect lands on the plain app, in the same trace)."""
+    return next((s for s in harness.spans(trace_id) if s.kind == "SPAN_KIND_SERVER" and s.parent == parent_id
+                 and s.attrs.get("coldbox.event") == "main.redirect"), None)
+
+
+def test_relocate_records_the_redirect_status(cb):
+    assert cb["redirect_status"] == 200, cb["redirect_status"]   # the runner follows the redirect
+    server = _relocate_span(cb["RT"], cb["RP"])
+    assert server is not None, [(s.name, s.attrs) for s in harness.spans(cb["RT"])]
+    assert server.attrs.get("http.response.status_code") == 302, server.attrs
+
+
+def test_relocate_before_onabort_was_seen_has_no_wrong_status(run, cb):
+    server = _relocate_span(cb["RT0"], cb["RP0"])
+    assert server is not None, [(s.name, s.attrs) for s in harness.spans(cb["RT0"])]
+    if run.target.sdk:
+        # ended at postProcess, before the redirect set the status: unknown beats a wrong 200
+        assert "http.response.status_code" not in server.attrs, server.attrs
+    else:
+        assert server.attrs.get("http.response.status_code") == 302, server.attrs
 
 
 def test_reinit_shuts_the_fallback_sdk_down(run, cb):

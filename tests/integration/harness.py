@@ -239,6 +239,8 @@ class Run:
     coldbox: dict
     started: datetime
     fail: dict = field(default_factory=dict)   # unhandled-error request: trace id, parent id, HTTP status
+    abort: dict = field(default_factory=dict)  # aborted and redirected requests: trace/parent ids, HTTP statuses
+    stale: dict = field(default_factory=dict)  # stale.cfm's response
 
     @property
     def scenarios(self) -> dict:
@@ -252,7 +254,7 @@ def drive(t: Target) -> Run:
     started = datetime.now(timezone.utc) - timedelta(minutes=5)
     app = f"{t.base}/cfml-otel/tests/app"
     trace_id, parent_id = hex_id(16), hex_id(8)
-    response = get_json(f"{app}/scenarios.cfm?reinit=1&db={1 if t.db else 0}", traceparent(trace_id, parent_id))
+    response = get_json(f"{app}/scenarios.cfm?reinit=1&db={1 if t.db else 0}&sig=topsecret", traceparent(trace_id, parent_id))
 
     # Unhandled error through Application.cfc onError()
     fail = {"T": hex_id(16), "P": hex_id(8)}
@@ -265,6 +267,16 @@ def drive(t: Target) -> Run:
         ct = hex_id(16)
         if get_json(f"{app}/check.cfm", traceparent(ct, hex_id(8))).get("traceId") != ct:
             leak_bad += 1
+
+    # cfabort / cflocation end a request through Application.cfc onAbort(), not onRequestEnd(). The abort page
+    # leaks a scope first: afterwards no request without a traceparent may land in its trace.
+    abort = {"T": hex_id(16), "P": hex_id(8), "RT": hex_id(16), "RP": hex_id(8)}
+    abort["status"] = http(f"{app}/abort.cfm", traceparent(abort["T"], abort["P"]))[0]
+    abort["redirect_status"] = http(f"{app}/redirect.cfm", traceparent(abort["RT"], abort["RP"]))[0]
+    abort["bad"] = sum(1 for _ in range(40) if get_json(f"{app}/check.cfm").get("traceId") == abort["T"])
+
+    # sdkFallback: a stale context on the thread is not the next SERVER span's parent (no traceparent sent)
+    stale = get_json(f"{app}/stale.cfm")
 
     # ColdBox app (tests/coldbox): the repo loaded as an installed module, the way `box install` puts it
     cb: dict = {"error": ""}
@@ -283,10 +295,21 @@ def drive(t: Target) -> Run:
             ct = hex_id(16)
             if get_json(f"{cb_base}?event=main.check", traceparent(ct, hex_id(8))).get("traceId") != ct:
                 cb["bad"] += 1
+        # A handler that aborts: only Application.cfc onAbort() runs afterwards
+        cb["AT"], cb["AP"] = hex_id(16), hex_id(8)
+        cb["abort_status"] = http(f"{cb_base}?event=main.abortNow", traceparent(cb["AT"], cb["AP"]))[0]
+        cb["abort_bad"] = sum(1 for _ in range(30) if get_json(f"{cb_base}?event=main.check").get("traceId") == cb["AT"])
+        # relocate(): by now cfml-otel has seen the app's onAbort() (abortNow), so the fallback leaves the
+        # SERVER span for it and the redirect's status is recorded
+        cb["RT"], cb["RP"] = hex_id(16), hex_id(8)
+        cb["redirect_status"] = http(f"{cb_base}?event=main.redirect", traceparent(cb["RT"], cb["RP"]))[0]
         # Reinit again: the module's onUnload() must shut the fallback SDK down, so this load starts a fresh one
         http(f"{cb_base}?fwreinit=1", timeout=180)
         cb["afterReinit"] = get_json(f"{cb_base}?event=main.index")
+        # relocate() on the fresh instance, which hasn't seen onAbort() yet: the fallback can't know the status
+        cb["RT0"], cb["RP0"] = hex_id(16), hex_id(8)
+        http(f"{cb_base}?event=main.redirect", traceparent(cb["RT0"], cb["RP0"]))
     except Exception as e:  # reported by the ColdBox tests, not a crash of the whole run
         cb["error"] = f"{type(e).__name__}: {e}"
 
-    return Run(t, trace_id, parent_id, response, leak_bad, cb, started, fail)
+    return Run(t, trace_id, parent_id, response, leak_bad, cb, started, fail, abort, stale)

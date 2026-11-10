@@ -37,7 +37,19 @@ component {
         event.renderData(type = "json", data = { "leakedSpanId": s.getSpanId() });
     }
 
-    // Used after fail/leak: every pooled thread must start clean and continue the incoming trace
+    // Leaks a scope, then aborts inside the handler: no interceptor runs after that, so the app's
+    // Application.cfc onAbort() -> otel.onAbort() has to clean up
+    function abortNow(event, rc, prc) {
+        otel.startSpan("cb.leaked-before-abort").makeCurrent();
+        abort;
+    }
+
+    // relocate() announces postProcess and then redirects (to the plain test app's check page)
+    function redirect(event, rc, prc) {
+        relocate(URI = "/cfml-otel/tests/app/check.cfm");
+    }
+
+    // Used after fail/leak/abortNow: every pooled thread must start clean and continue the incoming trace
     function check(event, rc, prc) {
         event.renderData(type = "json", data = { "traceId": otel.traceId(), "spanId": otel.spanId() });
     }

@@ -6,7 +6,8 @@
 #
 # The repo is mounted read-only under each engine's web root at /cfml-otel. Tests live in tests/app (plain
 # CFML), tests/coldbox (ColdBox: ColdBox itself at /opt/coldbox, this repo as an installed module at
-# /opt/cbmodules/cfml-otel) and tests/integration (the pytest runner). Grafana: http://localhost:3000.
+# /opt/cbmodules/cfml-otel; the *-sdk engines mount it as cfmlotel-renamed instead, since the module must work
+# from any folder name) and tests/integration (the pytest runner). Grafana: http://localhost:3000.
 #
 # x86-64 only: the ACF and SQL Server images. On ARM, run the Lucee engines with MSSQL=0 and --no-deps.
 name: cfml-otel-dev
@@ -118,7 +119,7 @@ services:
       <<: *otlp-env
       OTEL_SERVICE_NAME: "cfml-otel-lucee7-sdk"
       CFMLOTEL_SDK_FALLBACK: "true"   # read by tests/app and tests/coldbox
-    volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   acf2025-sdk:
     image: adobecoldfusion/coldfusion2025:2025.0.14
@@ -128,7 +129,7 @@ services:
       <<: [*otlp-env, *acf-env]
       OTEL_SERVICE_NAME: "cfml-otel-acf2025-sdk"
       CFMLOTEL_SDK_FALLBACK: "true"
-    volumes: ["..:/app/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   lucee6-sdk:
     image: lucee/lucee:6.2.9.4
@@ -138,7 +139,7 @@ services:
       <<: *otlp-env
       OTEL_SERVICE_NAME: "cfml-otel-lucee6-sdk"
       CFMLOTEL_SDK_FALLBACK: "true"
-    volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   acf2023-sdk:
     image: adobecoldfusion/coldfusion2023:2023.0.26
@@ -149,7 +150,7 @@ services:
       OTEL_SERVICE_NAME: "cfml-otel-acf2023-sdk"
       CFMLOTEL_SDK_FALLBACK: "true"
       JAVA_TOOL_OPTIONS: "-XX:-UseContainerSupport"   # same JDK 17 cgroup v2 NPE as acf2023 (see there)
-    volumes: ["..:/app/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   # ---- tools: started only by `docker compose run --rm <name>` -------------------------------------
   build:

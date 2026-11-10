@@ -10,7 +10,8 @@
 component {
 
     property name="otel" inject="OTel@cfmlotel";
-    property name="settings" inject="coldbox:moduleSettings:cfml-otel";
+    // mapped by ModuleConfig.cfc to this module's settings, whatever folder the module is installed in
+    property name="settings" inject="settings@cfmlotel";
 
     function preProcess(event, data, rc, prc) {
         // sdkFallback (no agent): starts the request's SERVER span; a no-op with the agent
@@ -25,14 +26,34 @@ component {
         // and then records the exception on the SERVER span rather than on a leaked inner span.
         var payload = interceptionData(arguments);
         if (structKeyExists(payload, "exception")) {
-            otel.onError(payload.exception);
+            // 500: ColdBox sets that status right after announcing onException, so the response doesn't carry
+            // it yet when the sdkFallback SERVER span is ended here
+            otel.onError(payload.exception, 500);
         } else {
             otel.onRequestEnd();
         }
     }
 
     function postProcess(event, data, rc, prc) {
-        otel.onRequestEnd();
+        // relocate() announces postProcess and then redirects. Only the sdkFallback SERVER span cares (the
+        // redirect's status isn't on the response yet), so the call stack is only read when there is one.
+        if (otel.hasServerSpan() && insideRelocate()) {
+            otel.onRedirecting();
+        } else {
+            otel.onRequestEnd();
+        }
+    }
+
+    /** True when this interception was announced from ColdBox's Controller.relocate(). */
+    private boolean function insideRelocate() {
+        try {
+            for (var frame in callStackGet()) {
+                if (frame.function == "relocate"
+                    && findNoCase("Controller.", listLast(replace(frame.template, "\", "/", "all"), "/")) == 1) return true;
+            }
+        } catch (any ignored) {
+        }
+        return false;
     }
 
     private struct function interceptionData(required struct args) {

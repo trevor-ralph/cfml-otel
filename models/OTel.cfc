@@ -56,6 +56,10 @@ component {
         // wrong template under the ACF thread bug described above.
         var myName = getMetadata(this).name;
         st.pkg = listLen(myName, ".") > 1 ? listDeleteAt(myName, listLen(myName, "."), ".") & "." : "";
+        // The span handed out when there is nothing to record. It keeps no state, so one serves every caller.
+        st.noopSpan = createObject("component", st.pkg & "Span").init(this, "", "", false, false);
+        // Set once the app's onAbort() has called onAbort(): see onRedirecting()
+        st.abortHookSeen = false;
 
         if (!cfg.enabled) {
             st.reason = "disabled by configuration";
@@ -218,15 +222,18 @@ component {
             attrs["url.scheme"] = req.getScheme();
             attrs["url.path"] = req.getRequestURI();
             var qs = req.getQueryString();
-            if (!isNull(qs) && len(qs)) attrs["url.query"] = qs;
+            // signatures and access keys are redacted, as in a CLIENT span's url.full
+            if (!isNull(qs) && len(qs)) attrs["url.query"] = st.bridge.redactQuery(qs);
             attrs["server.address"] = req.getServerName();
             attrs["server.port"] = req.getServerPort();
             attrs["client.address"] = req.getRemoteAddr();
             var ua = req.getHeader("User-Agent");
             if (!isNull(ua)) attrs["user_agent.original"] = ua;
             attrs["network.protocol.version"] = listLast(req.getProtocol(), "/");
+            // Parent: the inbound trace headers or nothing. Never the thread's current context: a request that
+            // ended without cleanup leaves its span current on the pooled thread.
             var s = this.startSpan(method & " " & route, {
-                "kind": "server", "attributes": attrs, "parent": st.bridge.extractContext(st.otel, carrier) });
+                "kind": "server", "attributes": attrs, "parent": st.bridge.extractRootContext(st.otel, carrier) });
             request.__cfmlotelServer = { "span": s, "token": s.makeCurrent(), "thread": st.jThread.currentThread().getId() };
         } catch (any e) {
             // tracing must never break the request
@@ -244,6 +251,8 @@ component {
             if (structKeyExists(srv, "statusCode") && srv.statusCode > 0) code = srv.statusCode;
             // after an exception, a non-error status only means the app hadn't set one yet: unknown, leave it out
             else if (structKeyExists(srv, "errorType") && code < 400) code = 0;
+            // a redirect is about to set the status (onRedirecting()): what the response says now isn't it
+            else if (structKeyExists(srv, "statusUnknown")) code = 0;
             if (code > 0) {
                 srv.span.setAttribute("http.response.status_code", code);
                 if (code >= 500) {
@@ -310,8 +319,8 @@ component {
      */
     public any function startSpan(required string name, struct options = {}) {
         var st = this.__state;
-        if (!st.enabled) return createObject("component", st.pkg & "Span").init(this, "", "", false, false);
-        var kind = structKeyExists(arguments.options, "kind") ? arguments.options.kind : "internal";
+        if (!st.enabled) return st.noopSpan;
+        var kind =structKeyExists(arguments.options, "kind") ? arguments.options.kind : "internal";
         var attributes = structKeyExists(arguments.options, "attributes") ? arguments.options.attributes : {};
         var parent = structKeyExists(arguments.options, "parent") ? arguments.options.parent : "";
         var js = st.bridge.startSpan(st.tracer, arguments.name, kind, attributes, parent);
@@ -321,7 +330,7 @@ component {
     /** The current span (usually the agent's SERVER span or an enclosing span()). end() on it is ignored. */
     public any function currentSpan() {
         var st = this.__state;
-        if (!st.enabled) return createObject("component", st.pkg & "Span").init(this, "", "", false, false);
+        if (!st.enabled) return st.noopSpan;
         return createObject("component", st.pkg & "Span").init(this, st.bridge, st.bridge.currentSpan(), false, true);
     }
 
@@ -435,38 +444,46 @@ component {
     public any function httpSpan(required string url, required any fn, struct options = {}) {
         var st = this.__state;
         var o = arguments.options;
-        var method = structKeyExists(o, "method") && len(o.method) ? o.method : "GET";
-        if (!st.enabled || st.httpMode != "span") {
-            var noop = createObject("component", st.pkg & "Span").init(this, "", "", false, false);
-            var plain = arguments.fn(this.injectHeaders({}), noop);
+        var target = arguments.fn;
+        var self = this;
+        var setup = {};
+        if (st.enabled && st.httpMode == "span") {
+            // Working out the span's name and attributes must never stop the call itself: if that fails
+            // (an unparseable URL, say), fn still runs, untraced
+            try {
+                var method = structKeyExists(o, "method") && len(o.method) ? o.method : "GET";
+                var template = structKeyExists(o, "urlTemplate") ? o.urlTemplate : "";
+                var attrs = this._toCfml(st.bridge.httpClientAttributes(method, arguments.url));
+                if (len(template)) attrs["url.template"] = template;
+                if (structKeyExists(o, "attributes")) structAppend(attrs, o.attributes, true);
+                setup = { "attributes": attrs,
+                    "name": structKeyExists(o, "name") && len(o.name) ? o.name : st.bridge.httpSpanName(method, template) };
+            } catch (any setupError) {
+                setup = {};
+            }
+        }
+        if (structIsEmpty(setup)) {
+            var plain = target(this.injectHeaders({}), st.noopSpan);
             if (!isNull(plain)) return plain;
             return;
         }
-        var template = structKeyExists(o, "urlTemplate") ? o.urlTemplate : "";
-        var attrs = this._toCfml(st.bridge.httpClientAttributes(method, arguments.url));
-        if (len(template)) attrs["url.template"] = template;
-        if (structKeyExists(o, "attributes")) structAppend(attrs, o.attributes, true);
-        var name = structKeyExists(o, "name") && len(o.name) ? o.name : st.bridge.httpSpanName(method, template);
-        var s = this.startSpan(name, { "kind": "client", "attributes": attrs });
-        var token = s.makeCurrent();
-        try {
-            var result = arguments.fn(this.injectHeaders({}), s);
+        // span() makes the CLIENT span current, records an exception from fn and always ends the span
+        return this.span(setup.name, function(s) {
+            try {
+                var result = target(self.injectHeaders({}), s);
+            } catch (any e) {
+                s.setAttribute("error.type", len(e.type) ? e.type : "_OTHER");
+                rethrow;
+            }
             if (!isNull(result)) {
-                this._recordHttpResult(s, result);
+                try {
+                    self._recordHttpResult(s, result);
+                } catch (any ignored) {
+                    // an odd result must not turn a finished call into a failure
+                }
                 return result;
             }
-        } catch (any e) {
-            s.setAttribute("error.type", len(e.type) ? e.type : "_OTHER");
-            s.recordException(e);
-            s.setStatus("ERROR", e.message);
-            rethrow;
-        } finally {
-            try {
-                this._releaseScope(token);
-            } finally {
-                s.end();
-            }
-        }
+        }, { "kind": "client", "attributes": setup.attributes });
     }
 
     /**
@@ -598,6 +615,39 @@ component {
             this._endServerSpan();
         }
         return closed;
+    }
+
+    /**
+     * Call from Application.cfc onAbort(). cfabort and cflocation end a request through onAbort(), and
+     * neither engine runs onRequestEnd() then: without this call the request's scopes stay open on the pooled
+     * thread and, in sdkFallback mode, its SERVER span is never ended. Same work as onRequestEnd(), and safe
+     * to call when that runs as well.
+     */
+    public numeric function onAbort() {
+        this.__state.abortHookSeen = true;
+        return this.onRequestEnd();
+    }
+
+    /**
+     * For code that has to clean up BEFORE a redirect it can't see finish: ColdBox's relocate() announces
+     * postProcess and only then sends cflocation, which aborts the request. Closes the leaked scopes like
+     * onRequestEnd(). In sdkFallback mode the response doesn't carry the redirect's status yet, so:
+     * if the app's onAbort() calls otel.onAbort() (seen at least once), the SERVER span is left for that call,
+     * which records the real status; otherwise it is ended here without a status code rather than a wrong one.
+     */
+    public numeric function onRedirecting() {
+        var st = this.__state;
+        if (!st.enabled) return 0;
+        var srv = this._serverOnThisThread();
+        if (structIsEmpty(srv)) return this.onRequestEnd();
+        if (st.abortHookSeen) return this.closeLeakedScopes("at request end");
+        srv.statusUnknown = true;
+        return this.onRequestEnd();
+    }
+
+    /** True while this thread's request has an sdkFallback SERVER span that hasn't been ended. */
+    public boolean function hasServerSpan() {
+        return this.__state.enabled && !structIsEmpty(this._serverOnThisThread());
     }
 
     /**

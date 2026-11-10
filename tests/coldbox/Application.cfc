@@ -1,6 +1,7 @@
 /**
  * ColdBox integration test app. dev/docker-compose.yml mounts ColdBox at /opt/coldbox and this repo as an
- * installed module at /opt/cbmodules/cfml-otel, the way `box install cfml-otel` would put it in modules/.
+ * installed module at /opt/cbmodules/cfml-otel, the way `box install cfml-otel` would put it in modules/
+ * (the *-sdk engines mount it under another folder name: the module must not depend on its folder's name).
  * Driven by the pytest runner in tests/integration.
  */
 component {
@@ -15,7 +16,8 @@ component {
     this.mappings["/cbapp"] = variables.appRoot;
     // ColdBox can't change the classpath, so the host app loads the module's jars (see README)
     // (lib/sdk/ only matters with sdkFallback; harmless with the agent, which is what the agent jobs check)
-    this.javaSettings = { loadPaths: ["/opt/cbmodules/cfml-otel/lib/", "/opt/cbmodules/cfml-otel/lib/sdk/"], loadColdFusionClassPath: true, reloadOnChange: false };
+    variables.moduleRoot = "/opt/cbmodules/" & directoryList("/opt/cbmodules", false, "name")[1];
+    this.javaSettings = { loadPaths: [variables.moduleRoot & "/lib/", variables.moduleRoot & "/lib/sdk/"], loadColdFusionClassPath: true, reloadOnChange: false };
 
     COLDBOX_APP_ROOT_PATH = variables.appRoot;
     COLDBOX_APP_MAPPING = "cbapp";
@@ -38,5 +40,10 @@ component {
 
     public boolean function onRequestStart(string targetPage) {
         return application.cbBootstrap.onRequestStart(arguments.targetPage);
+    }
+
+    // A handler that aborts bypasses the module's interceptor (README "ColdBox"), so clean up here
+    public void function onAbort(string targetPage) {
+        application.cbController.getWireBox().getInstance("OTel@cfmlotel").onAbort();
     }
 }

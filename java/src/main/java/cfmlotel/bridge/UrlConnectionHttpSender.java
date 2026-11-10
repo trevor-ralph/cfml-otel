@@ -142,8 +142,11 @@ final class UrlConnectionHttpSender implements HttpSender {
       String message = conn.getResponseMessage();
       InputStream in = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
       return new Response(status, message == null ? "" : message, read(in, config.getMaxResponseBodySize()));
-    } finally {
+    } catch (IOException | RuntimeException e) {
+      // Only a failed exchange drops the connection. After a complete one (response read to the end and
+      // closed) the JDK keeps it alive for the next export; disconnect() would close the socket every time.
       conn.disconnect();
+      throw e;
     }
   }
 

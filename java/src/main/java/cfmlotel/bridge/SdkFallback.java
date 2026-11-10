@@ -3,6 +3,8 @@ package cfmlotel.bridge;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.autoconfigure.AutoConfiguredOpenTelemetrySdk;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -40,6 +42,10 @@ final class SdkFallback {
         }
       }
     }
+    // A service.name in OTEL_RESOURCE_ATTRIBUTES is the operator's choice too, but autoconfigure lets
+    // otel.service.name win over it: don't supply the default name then.
+    String fromResource = resourceServiceName(Diagnostics.config("otel.resource.attributes"));
+    if (!fromResource.isEmpty()) props.remove("otel.service.name");
     Map<String, String> forced = new HashMap<>();
     if (overrides != null) {
       for (Map.Entry<?, ?> e : overrides.entrySet()) {
@@ -47,6 +53,14 @@ final class SdkFallback {
           forced.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
         }
       }
+    }
+    // otel.sdk.disabled: autoconfigure would hand back an SDK that makes spans and exports nothing, which
+    // looks like a working fallback. Say what is going on instead.
+    if ("true".equalsIgnoreCase(Diagnostics.config("otel.sdk.disabled"))) {
+      r.put("started", false);
+      r.put("serviceName", "");
+      r.put("error", "the OpenTelemetry SDK is disabled (OTEL_SDK_DISABLED / otel.sdk.disabled is true)");
+      return r;
     }
     OpenTelemetrySdk sdk;
     try {
@@ -67,11 +81,31 @@ final class SdkFallback {
     register(sdk);
     String configured = Diagnostics.config("otel.service.name");
     String name = forced.containsKey("otel.service.name") ? forced.get("otel.service.name")
-        : !configured.isEmpty() ? configured : props.getOrDefault("otel.service.name", "");
+        : !configured.isEmpty() ? configured
+        : !fromResource.isEmpty() ? fromResource : props.getOrDefault("otel.service.name", "");
     r.put("started", true);
     r.put("serviceName", name);
     r.put("sdk", sdk);
     return r;
+  }
+
+  /** service.name from an otel.resource.attributes value ("k=v,k2=v2", values percent-encoded), else "". */
+  static String resourceServiceName(String resourceAttributes) {
+    String found = "";
+    if (resourceAttributes == null) return found;
+    for (String pair : resourceAttributes.split(",")) {
+      int eq = pair.indexOf('=');
+      if (eq <= 0 || !"service.name".equals(pair.substring(0, eq).trim())) continue;
+      String v = pair.substring(eq + 1).trim();
+      try {
+        // as autoconfigure reads it: percent-decoded, with a literal "+" kept
+        v = URLDecoder.decode(v.replace("+", "%2B"), "UTF-8");
+      } catch (UnsupportedEncodingException | IllegalArgumentException ignored) {
+        // not valid percent-encoding: keep the raw value
+      }
+      found = v;
+    }
+    return found;
   }
 
   private static synchronized void register(OpenTelemetrySdk sdk) {

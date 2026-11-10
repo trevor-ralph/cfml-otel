@@ -182,6 +182,11 @@ component extends="testbox.system.BaseSpec" {
                 expect(r).toHaveKey("statusCode");
                 expect(left(r.statusCode, 3)).notToMatch("^\d{3}$");
             });
+            it("still runs the body when the span can't be set up", function() {
+                // a port no URL parser accepts, and options the helper can't use: the call itself must go ahead
+                expect(variables.otel.httpSpan("http://h.test:99999999999/x", function() { return "ran"; })).toBe("ran");
+                expect(variables.otel.httpSpan("http://h.test/", function() { return "ran"; }, { "attributes": "not a struct" })).toBe("ran");
+            });
             it("rethrows what the body throws", function() {
                 expect(function() {
                     variables.otel.httpSpan("http://h.test/", function() { throw(type = "Spec.HttpFail"); });

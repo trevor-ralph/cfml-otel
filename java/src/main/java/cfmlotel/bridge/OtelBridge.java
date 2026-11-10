@@ -99,6 +99,11 @@ public final class OtelBridge {
     return HttpClientSemconv.attributes(method, url);
   }
 
+  /** A request's query string for url.query, with the same sensitive parameter values redacted as url.full. */
+  public static String redactQuery(String query) {
+    return HttpClientSemconv.redactQuery(query);
+  }
+
   public static String httpSpanName(String method, String urlTemplate) {
     return HttpClientSemconv.spanName(method, urlTemplate);
   }
@@ -409,6 +414,16 @@ public final class OtelBridge {
   public static Object extractContext(Object otel, Map<?, ?> headers) {
     return otel(otel).getPropagators().getTextMapPropagator()
         .extract(Context.current(), headers, MAP_GETTER);
+  }
+
+  /**
+   * Like extractContext(), but onto the root context rather than this thread's current one. For a request's
+   * SERVER span: whatever an earlier request left current on a pooled thread must never become its parent.
+   * Without inbound trace headers this is the root context, i.e. a new trace.
+   */
+  public static Object extractRootContext(Object otel, Map<?, ?> headers) {
+    return otel(otel).getPropagators().getTextMapPropagator()
+        .extract(Context.root(), headers, MAP_GETTER);
   }
 
   // ------------------------------------------------------------------------------------------

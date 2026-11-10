@@ -5,6 +5,28 @@ release notes.
 
 ## [Unreleased]
 
+### Added
+- `otel.onAbort()`, to call from `Application.cfc` `onAbort()`. Requests ended by `cfabort` / `cflocation` skip
+  `onRequestEnd()` on both engines, which left their scopes on the pooled thread and, with the SDK
+  fallback, their SERVER span un-ended.
+
+### Fixed
+- SDK fallback: the request's SERVER span is parented on the inbound trace headers or nothing, never on a
+  context an earlier request left current on the pooled thread.
+- SDK fallback: a `service.name` set through `OTEL_RESOURCE_ATTRIBUTES` is no longer replaced by the
+  application name.
+- ColdBox with the SDK fallback: the SERVER span of a request whose event threw now carries
+  `http.response.status_code` 500, and a `relocate()` no longer records the pre-redirect status (usually 200):
+  it records the redirect's status once the app's `onAbort()` calls `otel.onAbort()`, and none before that.
+- ColdBox: the module no longer has to be installed in a folder named `cfml-otel`.
+- `httpSpan()` / `http()`: a failure while preparing the span (a URL with an unusable port, unusable options)
+  no longer prevents the call itself; it runs untraced.
+- SDK fallback: `url.query` on the SERVER span has signature and access-key parameters redacted, like
+  `url.full` on CLIENT spans.
+- SDK fallback: with `OTEL_SDK_DISABLED=true` the fallback reports `SDK_FALLBACK_FAILED` instead of claiming
+  to run an SDK that exports nothing.
+- SDK fallback: the OTLP sender keeps its connection alive between exports instead of reconnecting each time.
+
 ### Tests
 - TestBox unit specs for the CFML side (`tests/specs`), run on every engine; CodeQL code scanning for the
   Java bridge, the Python test harness and the workflows.

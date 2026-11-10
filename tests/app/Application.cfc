@@ -63,7 +63,12 @@ component {
         application.otel.onRequestEnd();
     }
 
-    // 5. Record unhandled errors on the SERVER span. Set the status first: in sdkFallback mode this call ends
+    // 5. cfabort / cflocation end the request through onAbort(), and the engines then skip onRequestEnd()
+    function onAbort(targetPage) {
+        application.otel.onAbort();
+    }
+
+    // 6. Record unhandled errors on the SERVER span. Set the status first: in sdkFallback mode this call ends
     //    the SERVER span (no engine runs onRequestEnd() after onError()) and records the status it sees.
     function onError(exception, eventName) {
         cfheader(statuscode = 500);
@@ -72,7 +77,7 @@ component {
         writeOutput(serializeJSON({ "error": structKeyExists(arguments.exception, "message") ? arguments.exception.message : "error" }));
     }
 
-    // 6. Flush (and in sdkFallback mode shut down) when the application stops
+    // 7. Flush (and in sdkFallback mode shut down) when the application stops
     function onApplicationEnd(appScope) {
         if (structKeyExists(arguments.appScope, "otel")) arguments.appScope.otel.shutdown();
     }

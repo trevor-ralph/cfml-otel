@@ -58,7 +58,13 @@ final class HttpClientSemconv {
       if (mm.find()) {
         scheme = mm.group(1);
         host = mm.group(2);
-        if (mm.group(3) != null) port = Integer.parseInt(mm.group(3));
+        if (mm.group(3) != null) {
+          try {
+            port = Integer.parseInt(mm.group(3));
+          } catch (NumberFormatException tooLong) {
+            port = Integer.MAX_VALUE;   // an unusable port, not a missing one: server.port is left off below
+          }
+        }
       }
     }
     if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
@@ -67,7 +73,7 @@ final class HttpClientSemconv {
       else if ("http".equalsIgnoreCase(scheme)) port = 80;
     }
     if (!host.isEmpty()) a.put("server.address", host);
-    if (port > 0) a.put("server.port", (long) port);
+    if (port > 0 && port <= 65535) a.put("server.port", (long) port);
     if (!u.isEmpty()) a.put("url.full", redact(u));
     return a;
   }
@@ -94,15 +100,23 @@ final class HttpClientSemconv {
     if (q < 0) return out;
     int hash = out.indexOf('#', q);
     String query = hash < 0 ? out.substring(q + 1) : out.substring(q + 1, hash);
+    return out.substring(0, q + 1) + redactQuery(query) + (hash < 0 ? "" : out.substring(hash));
+  }
+
+  /** A query string (no leading "?") with the sensitive parameters' values replaced by REDACTED. */
+  static String redactQuery(String query) {
+    if (query == null || query.isEmpty()) return "";
     StringBuilder sb = new StringBuilder();
+    boolean first = true;
     for (String pair : query.split("&", -1)) {
-      if (sb.length() > 0) sb.append('&');
+      if (!first) sb.append('&');
+      first = false;
       int eq = pair.indexOf('=');
       String key = eq < 0 ? pair : pair.substring(0, eq);
       if (eq >= 0 && SENSITIVE_QUERY_PARAMS.contains(key.toLowerCase(Locale.ROOT))) sb.append(key).append("=REDACTED");
       else sb.append(pair);
     }
-    return out.substring(0, q + 1) + sb + (hash < 0 ? "" : out.substring(hash));
+    return sb.toString();
   }
 
   /** Leading 3-digit status code of a cfhttp statusCode ("200 OK", "404 Not Found"), else 0. */

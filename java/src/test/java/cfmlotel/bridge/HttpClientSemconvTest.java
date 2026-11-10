@@ -56,6 +56,23 @@ class HttpClientSemconvTest {
   }
 
   @Test
+  void queryStringsAreRedactedOnTheirOwn() {
+    assertEquals("file=x&Signature=REDACTED&AWSAccessKeyId=REDACTED&n=",
+        HttpClientSemconv.redactQuery("file=x&Signature=abc123&AWSAccessKeyId=AKIAEXAMPLE&n="));
+    assertEquals("a=1&flag", HttpClientSemconv.redactQuery("a=1&flag"));
+    assertEquals("", HttpClientSemconv.redactQuery(""));
+    assertEquals("", HttpClientSemconv.redactQuery(null));
+  }
+
+  @Test
+  void unusablePortsAreLeftOffInsteadOfThrowing() {
+    Map<String, Object> a = HttpClientSemconv.attributes("GET", "http://host.test:99999999999/x");
+    assertEquals("host.test", a.get("server.address"));
+    assertEquals(null, a.get("server.port"));
+    assertEquals(null, HttpClientSemconv.attributes("GET", "http://host.test:70000/x y").get("server.port"));
+  }
+
+  @Test
   void spanNames() {
     assertEquals("GET", HttpClientSemconv.spanName("get", null));
     assertEquals("POST /orders/{id}", HttpClientSemconv.spanName("post", "/orders/{id}"));

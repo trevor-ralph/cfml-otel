@@ -108,6 +108,9 @@ component {   // Application.cfc
     function onRequestEnd() {
         application.otel.onRequestEnd();       // closes scopes the request leaked (important, see below)
     }
+    function onAbort() {
+        application.otel.onAbort();            // the same after cfabort / cflocation, which skip onRequestEnd()
+    }
     function onError(exception, eventName) {
         // set the status (cfheader statuscode=500) first, then:
         application.otel.onError(exception);   // records the error on the SERVER span
@@ -116,8 +119,12 @@ component {   // Application.cfc
 }
 ```
 
-With the agent, only `onRequestEnd()` and `onError()` matter. `onRequestStart()` and `shutdown()` cost nothing
-and keep the app ready for the SDK fallback.
+With the agent, only `onRequestEnd()`, `onAbort()` and `onError()` matter. `onRequestStart()` and `shutdown()`
+cost nothing and keep the app ready for the SDK fallback.
+
+`onAbort()` covers requests that end with `cfabort` or `cflocation`: the engine calls `onAbort()` for those, and
+neither engine runs `onRequestEnd()` afterwards. Without it such a request's leaked scopes stay on the
+pooled thread and, with the SDK fallback, its SERVER span is never ended.
 
 `this.javaSettings.loadPaths` is the one jar-loading method that works on both engines. Putting the
 jars on the server classpath (Tomcat `lib/`, `cfusion/lib/`) also works. Lucee's OSGi bundle loading
@@ -139,6 +146,23 @@ ColdBox can't change the classpath for you. Configure it in `config/Coldbox.cfc`
   (`onException`, since ColdBox skips `postProcess` then).
 
 Your `Application.cfc` doesn't need to call `onRequestStart()` / `onRequestEnd()` / `onError()` itself.
+`relocate()` is covered too: ColdBox announces `postProcess` before it redirects.
+
+One addition is worth making to `Application.cfc`:
+
+```cfml
+function onAbort() {
+    application.cbController.getWireBox().getInstance("OTel@cfmlotel").onAbort();
+}
+```
+
+It does two things. A handler that calls `abort` directly bypasses the interceptor, and this cleans up after it.
+And with the SDK fallback it is what gives a `relocate()` its real status code: the redirect's status isn't set
+yet when `postProcess` runs, so once cfml-otel has seen this `onAbort()` being called it leaves the SERVER span
+for it to end. Without it (and for the first redirect after a start) the span is ended at `postProcess` with
+no `http.response.status_code`. With the agent, the agent records the status either way.
+
+The module can live in a folder with any name (`modules/cfml-otel` is what `box install` creates).
 
 ### Without the javaagent (SDK fallback)
 
@@ -153,8 +177,9 @@ cfml-otel can run its own OpenTelemetry SDK. It's **opt-in**:
    reads: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, sampler, batch
    settings, and so on. It exports over OTLP `http/protobuf`, like the agent; gRPC isn't supported.
    `service.name`: the `serviceName` option if set (it wins over `OTEL_SERVICE_NAME`, so apps sharing a JVM
-   can differ), else `OTEL_SERVICE_NAME`, else the application name.
-4. Call `onRequestStart()` / `onRequestEnd()` / `onError()` and, in `onApplicationEnd()`, `shutdown()`, as in
+   can differ), else `OTEL_SERVICE_NAME`, else a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, else the
+   application name.
+4. Call `onRequestStart()` / `onRequestEnd()` / `onAbort()` / `onError()` and, in `onApplicationEnd()`, `shutdown()`, as in
    the example above. The ColdBox interceptor does the request calls for you.
 
 The fallback only starts when no agent is attached and nothing else has registered OpenTelemetry, so the
@@ -163,7 +188,8 @@ same configuration is safe on servers that do have the agent. `otel.status().mod
 
 **What you get:** a SERVER span per request, continuing incoming `traceparent` headers. It's named
 `GET /path/page.cfm` and carries `http.request.method`, `http.route` (the template), `url.path`,
-`url.query`, `url.scheme`, `server.address`/`port`, `client.address`, `user_agent.original` and
+`url.query` (signature and access-key parameters redacted, as in `url.full` on CLIENT spans), `url.scheme`,
+`server.address`/`port`, `client.address`, `user_agent.original` and
 `http.response.status_code` (5xx = error). You also get all of cfml-otel's API (`span()`, metrics,
 `log*()`, `httpSpan()` / `http()`, propagation) and leaked-scope cleanup.
 
@@ -209,7 +235,7 @@ writeDump(application.otel.status());
 | `LUCEE_HTTPCLIENT_INSTRUMENTATION` | Lucee with the agent's HttpClient instrumentation on, which breaks `cfhttp` traces. See [Outbound HTTP](#outbound-http-cfhttp). |
 | `OTHER_IMPLEMENTATION` (info) | The agent is attached, but something else registered OpenTelemetry, so telemetry goes there. |
 | `BRIDGE_NOT_LOADED` | The jars in `lib/` aren't on the application's classpath. |
-| `SDK_FALLBACK_FAILED` | `sdkFallback` is on but the SDK didn't start: `lib/sdk/` isn't on the classpath, or the `OTEL_*` configuration is invalid. |
+| `SDK_FALLBACK_FAILED` | `sdkFallback` is on but the SDK didn't start: `lib/sdk/` isn't on the classpath, the `OTEL_*` configuration is invalid, or `OTEL_SDK_DISABLED` is true. |
 
 The checks read JVM arguments, `JAVA_TOOL_OPTIONS` / `JDK_JAVA_OPTIONS`, system properties and `OTEL_*`
 environment variables. Settings made only in an agent configuration file aren't seen, so a

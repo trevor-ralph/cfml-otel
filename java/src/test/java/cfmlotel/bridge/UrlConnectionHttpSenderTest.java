@@ -59,6 +59,7 @@ class UrlConnectionHttpSenderTest {
           "type", String.valueOf(ex.getRequestHeaders().getFirst("Content-Type")),
           "auth", String.valueOf(ex.getRequestHeaders().getFirst("Authorization")),
           "encoding", String.valueOf(enc),
+          "clientPort", String.valueOf(ex.getRemoteAddress().getPort()),
           "body", new String(body, StandardCharsets.ISO_8859_1)));
       int status = failFirst.getAndDecrement() > 0 ? 503 : 200;
       byte[] reply = "ok".getBytes(StandardCharsets.UTF_8);
@@ -123,6 +124,15 @@ class UrlConnectionHttpSenderTest {
     assertEquals("application/x-protobuf", req.get("type"));
     assertEquals("Bearer test", req.get("auth"));
     assertEquals("payload", req.get("body"));
+    s.shutdown();
+  }
+
+  @Test
+  void connectionIsKeptAliveBetweenExports() throws Exception {
+    UrlConnectionHttpSender s = new UrlConnectionHttpSender(config(endpoint("/v1/traces"), null, null));
+    for (int i = 0; i < 3; i++) assertEquals(200, send(s, message("batch " + i)).getStatusCode());
+    // one client port = one TCP connection for all three exports
+    assertEquals(1, requests.stream().map(r -> r.get("clientPort")).distinct().count(), requests.toString());
     s.shutdown();
   }
 

@@ -45,13 +45,19 @@ component {
             { class: "#moduleMapping#.interceptors.RequestLifecycle", name: "RequestLifecycle@cfmlotel" }
         ];
 
+        // ColdBox registers a module under its folder's name, which box install makes "cfml-otel" but which
+        // can be anything (a renamed checkout, a versioned folder): look the settings up by the real one.
+        var registeredName = listLast(replace(modulePath, "\", "/", "all"), "/");
+        var settingsDsl = "coldbox:moduleSettings:#registeredName#";
+
         // Mapped here, not in onLoad(): ColdBox creates the module's interceptors (which inject
         // OTel@cfmlotel) before it calls onLoad(). The settings are resolved when OTel is first built,
-        // so the app's moduleSettings["cfml-otel"] overrides are included.
+        // so the app's moduleSettings overrides are included.
         binder.map("OTel@cfmlotel")
             .to("#moduleMapping#.models.OTel")
-            .initArg(name = "config", dsl = "coldbox:moduleSettings:cfml-otel")
+            .initArg(name = "config", dsl = settingsDsl)
             .asSingleton();
+        binder.map("settings@cfmlotel").toDSL(settingsDsl);
     }
 
     /**
