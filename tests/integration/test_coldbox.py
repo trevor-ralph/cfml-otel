@@ -22,6 +22,8 @@ def test_interceptor_tags_the_server_span(cb):
     server = harness.server_span(cb["T"], cb["P"])
     assert server is not None
     assert server.attrs.get("coldbox.event") == "main.index", server.attrs
+    # setRoute (on by default): no route pattern matched (?event=), so the request is named by its event
+    assert server.name == "GET main.index" and server.attrs.get("http.route") == "main.index", (server.name, server.attrs)
 
 
 def test_app_module_settings_override_the_defaults(run, cb):
@@ -46,8 +48,18 @@ def test_onexception_records_the_error_on_the_server_span(cb):
     assert cb["fail_status"] == 500
     assert server is not None and server.status == "STATUS_CODE_ERROR"
     assert any("Custom.CbFail" in (t or "") for t in server.event_attr("exception", "exception.type")), server.events
-    # ColdBox sets the 500 only after announcing onException, which is where the sdkFallback SERVER span ends
+    # ColdBox sets the 500 after announcing onException; the span ends once the app's exceptionHandler has run
     assert server.attrs.get("http.response.status_code") == 500, server.attrs
+
+
+def test_exception_handler_status_is_recorded(cb):
+    """The app's exceptionHandler turns the error into a 404: the span records 404 and the exception, not ERROR."""
+    assert cb["notfound_status"] == 404, cb["notfound_status"]
+    server = harness.server_span(cb["NT"], cb["NP"])
+    assert server is not None, [s.name for s in harness.spans(cb["NT"])]
+    assert server.attrs.get("http.response.status_code") == 404, server.attrs
+    assert server.status != "STATUS_CODE_ERROR", (server.status, server.attrs)
+    assert any("Custom.CbNotFound" in (t or "") for t in server.event_attr("exception", "exception.type")), server.events
 
 
 def test_scopes_leaked_by_events_are_closed(cb):

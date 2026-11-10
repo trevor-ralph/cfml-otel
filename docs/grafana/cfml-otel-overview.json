@@ -1,0 +1,190 @@
+{
+  "title": "cfml-otel overview",
+  "uid": "cfml-otel-overview",
+  "description": "Starting point for a CFML app traced with the OpenTelemetry javaagent and cfml-otel: requests (RED) by route, outbound HTTP, JVM, Tomcat (JMX), your own metrics, traces and logs. Import it, pick the Prometheus/Tempo/Loki data sources and the service, then adapt. See docs/grafana/README.md.",
+  "tags": ["cfml-otel", "opentelemetry"],
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      { "name": "prometheus", "label": "Prometheus", "type": "datasource", "query": "prometheus" },
+      { "name": "tempo", "label": "Tempo", "type": "datasource", "query": "tempo" },
+      { "name": "loki", "label": "Loki", "type": "datasource", "query": "loki" },
+      {
+        "name": "service", "label": "Service", "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+        "query": { "query": "label_values(http_server_request_duration_seconds_count, service_name)", "refId": "service" },
+        "definition": "label_values(http_server_request_duration_seconds_count, service_name)",
+        "refresh": 2, "sort": 1
+      },
+      {
+        "name": "metric", "label": "Your metric", "type": "query",
+        "description": "Metrics this service records besides the standard HTTP/JVM/runtime ones: the counters, histograms and gauges your code creates with otel.counter() etc.",
+        "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+        "query": { "query": "label_values({service_name=\"$service\", __name__!~\"(http|jvm|db|rpc|process|target|otel|tomcat|scrape|up).*\"}, __name__)", "refId": "metric" },
+        "definition": "label_values({service_name=\"$service\", __name__!~\"(http|jvm|db|rpc|process|target|otel|tomcat|scrape|up).*\"}, __name__)",
+        "refresh": 2, "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Requests", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": [] },
+    {
+      "type": "stat", "title": "Requests / s", "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(http_server_request_duration_seconds_count{service_name=\"$service\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "stat", "title": "Server errors (5xx)", "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2,
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.01 }, { "color": "red", "value": 0.05 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area", "colorMode": "value" },
+      "targets": [{ "refId": "A", "expr": "(sum(rate(http_server_request_duration_seconds_count{service_name=\"$service\", http_response_status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{service_name=\"$service\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "stat", "title": "Latency p95", "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=\"$service\"}[$__rate_interval])))" }]
+    },
+    {
+      "type": "stat", "title": "Heap used", "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(jvm_memory_used_bytes{service_name=\"$service\", jvm_memory_type=\"heap\"})" }]
+    },
+    {
+      "type": "timeseries", "title": "Requests / s by route", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "description": "By http.route: the agent's servlet mapping (/*.cfm) unless the app names requests with otel.setRoute() (the ColdBox module does it for you).",
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{http_route}}", "expr": "topk(10, sum by (http_route) (rate(http_server_request_duration_seconds_count{service_name=\"$service\"}[$__rate_interval])))" }]
+    },
+    {
+      "type": "timeseries", "title": "Latency p95 by route", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{http_route}}", "expr": "topk(10, histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{service_name=\"$service\"}[$__rate_interval]))))" }]
+    },
+    {
+      "type": "timeseries", "title": "Responses / s by status", "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{http_response_status_code}}", "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=\"$service\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "timeseries", "title": "Outbound HTTP calls / s by host", "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "description": "cfhttp as the agent measures it (ACF, where the agent traces cfhttp). On Lucee, cfml-otel's http() / httpSpan() record CLIENT spans but no metric, so this stays empty there: see the traces.",
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{server_address}}", "expr": "sum by (server_address) (rate(http_client_request_duration_seconds_count{service_name=\"$service\"}[$__rate_interval]))" }]
+    },
+
+    { "type": "row", "title": "JVM", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 }, "panels": [] },
+    {
+      "type": "timeseries", "title": "Heap by pool", "gridPos": { "h": 7, "w": 8, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{jvm_memory_pool_name}}", "expr": "sum by (jvm_memory_pool_name) (jvm_memory_used_bytes{service_name=\"$service\", jvm_memory_type=\"heap\"})" },
+        { "refId": "B", "legendFormat": "max heap", "expr": "sum(jvm_memory_limit_bytes{service_name=\"$service\", jvm_memory_type=\"heap\"})" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "GC time (share of wall clock)", "gridPos": { "h": 7, "w": 8, "x": 8, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{jvm_gc_name}}", "expr": "sum by (jvm_gc_name) (rate(jvm_gc_duration_seconds_sum{service_name=\"$service\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "timeseries", "title": "CPU and threads", "gridPos": { "h": 7, "w": 8, "x": 16, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "fieldConfig": { "defaults": {}, "overrides": [
+        { "matcher": { "id": "byName", "options": "JVM CPU" }, "properties": [ { "id": "unit", "value": "percentunit" } ] },
+        { "matcher": { "id": "byName", "options": "threads" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] }
+      ] },
+      "targets": [
+        { "refId": "A", "legendFormat": "JVM CPU", "expr": "avg(jvm_cpu_recent_utilization_ratio{service_name=\"$service\"})" },
+        { "refId": "B", "legendFormat": "threads", "expr": "sum(jvm_thread_count{service_name=\"$service\"})" }
+      ]
+    },
+
+    { "type": "row", "title": "Tomcat (JMX: needs -Dotel.jmx.metrics.experimental.included=tomcat.*, see docs/grafana/README.md)", "collapsed": true, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 }, "panels": [
+      {
+        "type": "timeseries", "title": "Request threads", "gridPos": { "h": 7, "w": 8, "x": 0, "y": 29 },
+        "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+        "targets": [
+          { "refId": "A", "legendFormat": "busy {{tomcat_thread_pool_name}}", "expr": "sum by (tomcat_thread_pool_name) (tomcat_thread_busy_count{service_name=\"$service\"})" },
+          { "refId": "B", "legendFormat": "in pool {{tomcat_thread_pool_name}}", "expr": "sum by (tomcat_thread_pool_name) (tomcat_thread_count{service_name=\"$service\"})" },
+          { "refId": "C", "legendFormat": "max {{tomcat_thread_pool_name}}", "expr": "sum by (tomcat_thread_pool_name) (tomcat_thread_limit{service_name=\"$service\"})" }
+        ]
+      },
+      {
+        "type": "timeseries", "title": "Active sessions (ACF; Lucee keeps its own)", "gridPos": { "h": 7, "w": 8, "x": 8, "y": 29 },
+        "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+        "targets": [{ "refId": "A", "legendFormat": "sessions", "expr": "sum(tomcat_session_active_count{service_name=\"$service\"})" }]
+      },
+      {
+        "type": "timeseries", "title": "Requests and errors / s (Tomcat's own counts)", "gridPos": { "h": 7, "w": 8, "x": 16, "y": 29 },
+        "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+        "targets": [
+          { "refId": "A", "legendFormat": "requests", "expr": "sum(rate(tomcat_request_count_total{service_name=\"$service\"}[$__rate_interval]))" },
+          { "refId": "B", "legendFormat": "errors", "expr": "sum(rate(tomcat_error_count_total{service_name=\"$service\"}[$__rate_interval]))" }
+        ]
+      }
+    ] },
+
+    { "type": "row", "title": "Your metrics", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 }, "panels": [] },
+    {
+      "type": "timeseries", "title": "$metric", "gridPos": { "h": 7, "w": 24, "x": 0, "y": 30 },
+      "description": "Pick one of your own metrics in the \"Your metric\" variable. Counters (_total) and histograms (_bucket/_count/_sum) usually want rate(); duplicate this panel and edit the query for that.",
+      "datasource": { "type": "prometheus", "uid": "${prometheus}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{__name__}}", "expr": "sum by (__name__) ({__name__=\"$metric\", service_name=\"$service\"})" }]
+    },
+
+    { "type": "row", "title": "Traces", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 }, "panels": [] },
+    {
+      "type": "table", "title": "Failed requests", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 38 },
+      "datasource": { "type": "tempo", "uid": "${tempo}" },
+      "targets": [{ "refId": "A", "queryType": "traceql", "tableType": "traces", "limit": 20,
+        "query": "{ resource.service.name = \"$service\" && kind = server && status = error }" }]
+    },
+    {
+      "type": "table", "title": "Slow requests (over 1 s)", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 38 },
+      "datasource": { "type": "tempo", "uid": "${tempo}" },
+      "targets": [{ "refId": "A", "queryType": "traceql", "tableType": "traces", "limit": 20,
+        "query": "{ resource.service.name = \"$service\" && kind = server && duration > 1s }" }]
+    },
+    {
+      "type": "table", "title": "Slow database calls (over 200 ms)", "gridPos": { "h": 8, "w": 24, "x": 0, "y": 46 },
+      "description": "cfquery spans from the agent's JDBC instrumentation.",
+      "datasource": { "type": "tempo", "uid": "${tempo}" },
+      "targets": [{ "refId": "A", "queryType": "traceql", "tableType": "spans", "limit": 20,
+        "query": "{ resource.service.name = \"$service\" && (span.db.system != nil || span.db.system.name != nil) && duration > 200ms }" }]
+    },
+
+    { "type": "row", "title": "Logs", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 54 }, "panels": [] },
+    {
+      "type": "timeseries", "title": "Log lines / s by level", "gridPos": { "h": 6, "w": 24, "x": 0, "y": 55 },
+      "datasource": { "type": "loki", "uid": "${loki}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{detected_level}}", "expr": "sum by (detected_level) (rate({service_name=\"$service\"} [$__auto]))" }]
+    },
+    {
+      "type": "logs", "title": "Logs (with trace links)", "gridPos": { "h": 12, "w": 24, "x": 0, "y": 61 },
+      "description": "cflog / writeLog and the engine's own loggers, captured by the agent. FusionReactor's internal loggers are left out.",
+      "datasource": { "type": "loki", "uid": "${loki}" },
+      "options": { "showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending" },
+      "targets": [{ "refId": "A", "expr": "{service_name=\"$service\"} | scope_name !~ `com\\.intergral\\..*`" }]
+    }
+  ]
+}

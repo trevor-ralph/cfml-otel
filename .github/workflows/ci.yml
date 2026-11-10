@@ -1,7 +1,8 @@
 # Builds lib/ and runs the integration suite (Tempo / Prometheus / Loki checks) on every engine, with the
 # same containerized commands as a local run (README "Testing"). Lucee also runs on ARM; the ACF and
 # SQL Server images are x86-64 only, so the ARM jobs skip the SQL Server checks. The *-sdk engines run without
-# the javaagent, on cfml-otel's own SDK (sdkFallback).
+# the javaagent, on cfml-otel's own SDK (sdkFallback). min-api compiles the bridge against the oldest
+# opentelemetry-api it supports (OtelBridge.MIN_API_VERSION).
 name: CI
 
 on:
@@ -26,15 +27,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { engine: lucee8,  arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: lucee7,  arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: lucee6,  arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: acf2025, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           - { engine: acf2023, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
           # ACF with the agent but its HttpClient instrumentation off: the HTTP helpers' "span" mode on ACF
           - { engine: acf2025-nohttp, arch: x64, runner: ubuntu-latest, mssql: "0" }
+          # ACF with an older opentelemetry-api (1.38.0) in cfusion/lib and only the bridge jar loaded (bridge-only install)
+          - { engine: acf2023-serverapi, arch: x64, runner: ubuntu-latest, mssql: "0" }
+          - { engine: lucee8,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
           - { engine: lucee7,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
           - { engine: lucee6,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
           # No javaagent: cfml-otel's own SDK (sdkFallback); no JDBC tracing, so no SQL Server
+          - { engine: lucee8-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: lucee7-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: lucee6-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: acf2025-sdk, arch: x64,   runner: ubuntu-latest,    mssql: "0" }
@@ -77,3 +83,24 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down
+
+  min-api:
+    # The bridge is built against lib/'s API but must also run on an older one already on a server's classpath
+    # (README "Bridge-only install"): compiling against the oldest supported version catches any newer API call,
+    # which would otherwise only fail at runtime (NoSuchMethodError). acf2023-serverapi runs it end to end.
+    name: bridge compiles against the oldest supported OTel API
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compile against OtelBridge.MIN_API_VERSION
+        run: |
+          min="$(sed -n 's/.*String MIN_API_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' java/src/main/java/cfmlotel/bridge/OtelBridge.java)"
+          sdk="$(sed -n 's:.*<otel.api.version>\(.*\)</otel.api.version>.*:\1:p' java/pom.xml | head -1)"
+          [[ -n "$min" && -n "$sdk" ]] || { echo "could not read the API versions" >&2; exit 1; }
+          echo "opentelemetry-api $min (the SDK fallback's classes against SDK $sdk)"
+          docker run --rm -v "$PWD/java:/src" -w /src maven:3.9.15-eclipse-temurin-21 \
+            mvn -B -q -C -Dotel.api.version="$min" -Dotel.sdk.version="$sdk" compile

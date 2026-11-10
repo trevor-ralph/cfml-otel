@@ -33,6 +33,15 @@ def test_unhandled_error_marks_the_server_span(run):
     assert server.attrs.get("http.response.status_code") == 500, server.attrs
 
 
+def test_error_page_with_status_200_is_still_an_error(run):
+    """An error page sent as 200: without onError() the agent would record a successful request."""
+    assert run.fail["status200"] == 200, run.fail
+    server = harness.server_span(run.fail["T200"], run.fail["P200"])
+    assert server is not None, [s.name for s in harness.spans(run.fail["T200"])]
+    assert server.status == "STATUS_CODE_ERROR", (server.status, server.attrs)
+    assert "Custom.ServerFail" in server.event_attr("exception", "exception.type"), server.events
+
+
 def _server_span_for(trace_id: str, parent_id: str, page: str):
     """The SERVER span of one page, where several requests share a trace (a followed redirect)."""
     return next((s for s in harness.spans(trace_id) if s.kind == "SPAN_KIND_SERVER" and s.parent == parent_id
@@ -79,3 +88,32 @@ def test_sdk_fallback_status(run):
     assert s["mode"] == "sdk" and s["sdkFallback"]["started"], s
     assert s["sdkFallback"]["serviceName"] == run.target.service, s
     assert s["implementation"].startswith("io.opentelemetry.sdk."), s
+
+
+def test_instance_shared_with_an_app_without_the_mapping(run):
+    """tests/shared has no /cfmlotel mapping and no jars: span(), startSpan(), metrics must still work through the
+    test app's instance in the server scope, inside the shared app's own request trace."""
+    r = run.shared["response"]
+    assert "error" not in r, r
+    assert r["traceId"] == run.shared["T"] and r["manualIsCurrent"], r
+    server = _server_span_for(run.shared["T"], run.shared["P"], "/tests/shared/index.cfm")
+    assert server is not None, [(s.name, s.attrs.get("url.path")) for s in harness.spans(run.shared["T"])]
+    child = next((s for s in harness.spans(run.shared["T"]) if s.name == "shared.child"), None)
+    assert child is not None and child.id == r["childSpanId"] and child.parent == server.id, child
+    assert child.attrs.get("shared.app") is True, child.attrs
+
+
+def test_set_route_names_the_server_span(run):
+    """otel.setRoute(): the SERVER span is named by the route (agent: through its route bridge; SDK fallback:
+    cfml-otel's own span), the first route stays, and the agent's request-duration metric gets the label."""
+    assert run.route["response"]["set"] is True, run.route
+    server = _server_span_for(run.route["T"], run.route["P"], "/tests/app/route.cfm")
+    assert server is not None, [(s.name, s.attrs.get("url.path")) for s in harness.spans(run.route["T"])]
+    assert server.name == "GET cfmlotel.route.test", server.name
+    assert server.attrs.get("http.route") == "cfmlotel.route.test", server.attrs
+    if not run.target.sdk:
+        # the agent's http.server.request.duration carries the route (the fallback records no HTTP metrics)
+        q = f'http_server_request_duration_seconds_count{{service_name="{run.target.service}",http_route="cfmlotel.route.test"}}'
+        res = harness.get_json(f"{harness.GRAFANA}/api/datasources/proxy/uid/{harness.ds_uid('Prometheus')}/api/v1/query?"
+                               + harness.urllib.parse.urlencode({"query": q}))
+        assert res["data"]["result"], q

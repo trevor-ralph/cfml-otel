@@ -24,6 +24,7 @@ class DiagnosticsTest {
     f.agentBridged = true;
     f.active = true;
     f.implementation = "io.opentelemetry.javaagent.instrumentation.opentelemetryapi.ApplicationOpenTelemetry";
+    f.agentExtension = true;
     return f;
   }
 
@@ -135,9 +136,41 @@ class DiagnosticsTest {
     Diagnostics.Facts f = healthy("acf");
     f.otherAgents.add("FusionReactor");
     f.otherAgents.add("New Relic");
+    f.frMixinBlackList = "/opt/cfml-otel/lib/agent/fusionreactor-jdbc-mixin-blacklist.csv";
     List<Map<String, String>> w = Diagnostics.evaluate(f);
     assertEquals(List.of("OTHER_APM_AGENT"), codes(f));
     assertTrue(w.get(0).get("message").contains("FusionReactor, New Relic"));
+  }
+
+  @Test
+  void fusionReactorWithoutTheMixinBlackListLosesDatabaseSpans() {
+    Diagnostics.Facts f = healthy("acf");
+    f.otherAgents.add("FusionReactor");
+    List<Map<String, String>> w = Diagnostics.evaluate(f);
+    assertEquals(List.of("OTHER_APM_AGENT", "FUSIONREACTOR_JDBC_MIXINS"), codes(f));
+    assertTrue(w.get(1).get("message").contains("-Dfr.mixin.black.list=<cfml-otel>/lib/agent/fusionreactor-jdbc-mixin-blacklist.csv"));
+    f.frMixinBlackList = "/opt/cfml-otel/lib/agent/fusionreactor-jdbc-mixin-blacklist.csv";
+    assertEquals(List.of("OTHER_APM_AGENT"), codes(f));
+  }
+
+  @Test
+  void fusionReactorMixinsDontMatterWithJdbcInstrumentationOff() {
+    Diagnostics.Facts f = withConfig(healthy("acf"), "otel.instrumentation.jdbc.enabled", "false");
+    f.otherAgents.add("FusionReactor");
+    assertEquals(List.of("OTHER_APM_AGENT"), codes(f));
+  }
+
+  @Test
+  void acfWithoutTheAgentExtension() {
+    Diagnostics.Facts f = healthy("acf");
+    f.agentExtension = false;
+    List<Map<String, String>> w = Diagnostics.evaluate(f);
+    assertEquals(List.of("ACF_JDBC_EXTENSION"), codes(f));
+    assertTrue(w.get(0).get("message").contains("-Dotel.javaagent.extensions=<cfml-otel>/lib/agent/cfml-otel-agent-extension.jar"));
+    // only ACF has the macromedia drivers; and nothing to say when JDBC isn't traced anyway
+    f.engine = "lucee";
+    assertEquals(List.of("LUCEE_HTTPCLIENT_INSTRUMENTATION"), codes(f));
+    assertEquals(List.of(), codes(withConfig(healthy("acf"), "otel.instrumentation.common.default-enabled", "false")));
   }
 
   @Test
@@ -181,5 +214,112 @@ class DiagnosticsTest {
     assertEquals("1.67.0", r.get("apiVersion"));
     assertEquals(Boolean.TRUE, r.get("agentPresent"));
     assertTrue(r.get("warnings") instanceof List);
+  }
+
+  // ---- which opentelemetry-api the bridge runs on ----
+
+  private static Diagnostics.Facts withApi(Diagnostics.Facts f, String version, String apiPath, String... copies) {
+    f.apiVersion = version;
+    f.apiPath = apiPath;
+    f.bridgePath = "/app/cfml-otel/lib/cfml-otel-bridge-0.2.0.jar";
+    f.apiCopies = List.of(copies);
+    return f;
+  }
+
+  @Test
+  void bundledApiNextToTheBridgeIsNotReported() {
+    String api = "/app/cfml-otel/lib/opentelemetry-api-1.67.0.jar";
+    assertEquals(List.of(), codes(withApi(healthy("acf"), "1.67.0", api, api)));
+  }
+
+  @Test
+  void serverApiIsReportedAsInfo() {
+    String api = "/opt/coldfusion/cfusion/lib/opentelemetry-api-1.45.0.jar";
+    Diagnostics.Facts f = withApi(healthy("acf"), "1.45.0", api, api);
+    assertEquals(List.of("SERVER_OTEL_API"), codes(f));
+    Map<String, String> w = Diagnostics.evaluate(f).get(0);
+    assertEquals("info", w.get("level"));
+    assertTrue(w.get("message").contains("1.45.0 from " + api), w.get("message"));
+  }
+
+  @Test
+  void twoApiCopiesAreWarned() {
+    String server = "/opt/coldfusion/cfusion/lib/opentelemetry-api-1.45.0.jar";
+    String ours = "/app/cfml-otel/lib/opentelemetry-api-1.67.0.jar";
+    Diagnostics.Facts f = withApi(healthy("acf"), "1.45.0", server, server, ours);
+    assertEquals(List.of("DUPLICATE_OTEL_API"), codes(f));
+    String msg = Diagnostics.evaluate(f).get(0).get("message");
+    assertTrue(msg.contains("2 times") && msg.contains(server) && msg.contains(ours) && msg.contains("Bridge-only install"), msg);
+  }
+
+  @Test
+  void apiOlderThanTheMinimumIsWarned() {
+    String api = "/opt/coldfusion/cfusion/lib/opentelemetry-api-1.37.0.jar";
+    assertEquals(List.of("SERVER_OTEL_API", "OTEL_API_TOO_OLD"), codes(withApi(healthy("acf"), "1.37.0", api, api)));
+    assertEquals(List.of(), codes(withApi(healthy("acf"), OtelBridge.MIN_API_VERSION,
+        "/app/cfml-otel/lib/opentelemetry-api.jar", "/app/cfml-otel/lib/opentelemetry-api.jar")));
+  }
+
+  @Test
+  void onlyFusionReactorGetsTheDatabaseSpanWarning() {
+    Diagnostics.Facts f = healthy("acf");
+    f.otherAgents.add("FusionReactor");
+    String msg = Diagnostics.evaluate(f).get(1).get("message");
+    assertTrue(msg.contains("database") && msg.contains("FusionReactor"), msg);
+    f.otherAgents.set(0, "Datadog");
+    assertEquals(List.of("OTHER_APM_AGENT"), codes(f));
+    assertFalse(Diagnostics.evaluate(f).get(0).get("message").contains("database"));
+  }
+
+  @Test
+  void locationHelpers() throws Exception {
+    assertEquals("/opt/lib/a.jar", Diagnostics.path(new java.net.URL("jar:file:/opt/lib/a.jar!/io/x/Y.class")));
+    assertEquals("/opt/lib/a.jar", Diagnostics.path(new java.net.URL("file:/opt/lib/a.jar")));
+    assertEquals("/opt/cf/lib/a.jar", Diagnostics.path(new java.net.URL("jar:file:/opt/cf/bin/../lib/a.jar!/io/x/Y.class")));
+    // a class from a jar on the test classpath is located through its code source or, failing that, its .class resource
+    assertTrue(Diagnostics.location(io.opentelemetry.api.GlobalOpenTelemetry.class).endsWith(".jar"), Diagnostics.location(io.opentelemetry.api.GlobalOpenTelemetry.class));
+    assertEquals("/opt/lib/", Diagnostics.dir("/opt/lib/a.jar"));
+    assertEquals("C:/cf/lib/", Diagnostics.dir("C:\\cf\\lib\\a.jar"));
+    // the bridge's own API, from the test classpath: exactly one copy
+    assertEquals(1, Diagnostics.copies("io/opentelemetry/api/GlobalOpenTelemetry.class", getClass().getClassLoader()).size());
+  }
+
+  // ---- OTEL_* variables that didn't reach the JVM (ACF started as a service through sudo) ----
+
+  @Test
+  void envNotInheritedComparesWithTheJvmEnvironmentAndSystemProperties() {
+    Map<String, String> pid1 = Map.of("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318", "OTEL_SERVICE_NAME", "shop",
+        "OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED", "false", "PATH", "/usr/bin");
+    assertEquals(List.of("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED", "OTEL_SERVICE_NAME"),
+        Diagnostics.envNotInherited(pid1, Map.of(), java.util.Set.of()));
+    // inherited, or given as -D system properties (dots and dashes map to underscores): nothing to report
+    assertEquals(List.of(), Diagnostics.envNotInherited(pid1, Map.of("OTEL_SERVICE_NAME", "shop"),
+        java.util.Set.of("otel.exporter.otlp.endpoint", "otel.instrumentation.apache-httpclient.enabled")));
+    assertEquals(List.of(), Diagnostics.envNotInherited(Map.of(), Map.of(), java.util.Set.of()));
+  }
+
+  @Test
+  void readEnvironParsesNulSeparatedPairs() throws Exception {
+    java.nio.file.Path tmp = java.nio.file.Files.createTempFile("environ", "");
+    java.nio.file.Files.write(tmp, "A=1\u0000OTEL_SERVICE_NAME=a=b\u0000\u0000".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertEquals(Map.of("A", "1", "OTEL_SERVICE_NAME", "a=b"), Diagnostics.readEnviron(tmp));
+    java.nio.file.Files.delete(tmp);
+    assertEquals(Map.of(), Diagnostics.readEnviron(tmp));
+  }
+
+  @Test
+  void otelEnvThatDidNotReachTheJvmIsWarned() {
+    Diagnostics.Facts f = healthy("acf");
+    f.envNotInherited = List.of("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_SERVICE_NAME");
+    assertEquals(List.of("OTEL_ENV_NOT_INHERITED"), codes(f));
+    String msg = Diagnostics.evaluate(f).get(0).get("message");
+    assertTrue(msg.contains("http://localhost:4318") && msg.contains("-Dotel.exporter.otlp.endpoint"), msg);
+    // the endpoint is set some other way: no claim about where telemetry goes
+    msg = Diagnostics.evaluate(withConfig(f, "otel.exporter.otlp.endpoint", "http://x:4318")).get(0).get("message");
+    assertFalse(msg.contains("localhost:4318"), msg);
+    // nothing reads OTEL_* (no agent, no fallback): no warning
+    Diagnostics.Facts none = new Diagnostics.Facts();
+    none.envNotInherited = List.of("OTEL_SERVICE_NAME");
+    assertFalse(codes(none).contains("OTEL_ENV_NOT_INHERITED"));
   }
 }

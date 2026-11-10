@@ -6,6 +6,8 @@
 #     /opt/testbox). Pinned by SHA-256 like ColdBox.
 #   - Microsoft's JDBC driver for SQL Server, for ACF's "Other" datasource: dev/jdbc/mssql-jdbc.jar
 #     (mounted into ACF's server lib folder). Verified against Maven Central's SHA-1, like build.sh.
+#   - opentelemetry-api/-context at the bridge's oldest supported version, for the acf2023-serverapi engine:
+#     dev/serverapi/ (mounted into ACF's cfusion/lib). SHA-1 verified like the JDBC driver.
 # Runs on the host (bash + curl) or in the build container (`docker compose run --rm build`).
 set -euo pipefail
 
@@ -63,6 +65,37 @@ else
   mv "$tmp/mssql-jdbc.jar" "$dest/mssql-jdbc.jar"
   echo "$MSSQL_JDBC_VERSION" > "$dest/.version"
   echo "mssql-jdbc $MSSQL_JDBC_VERSION -> dev/jdbc/mssql-jdbc.jar"
+fi
+
+# --- An older opentelemetry-api for the acf2023-serverapi engine ------------------------------------------
+# Mounted into ACF's cfusion/lib, as when the server brings its own OTel jars: cfml-otel then loads only its
+# bridge jar (README "Bridge-only install"). The version is the oldest the bridge supports
+# (OtelBridge.MIN_API_VERSION). opentelemetry-instrumentation-api (for otel.setRoute()) goes next to it: the
+# agent only takes routes when it's loaded by the same class loader as the API. Verified against Maven
+# Central's SHA-1, like build.sh.
+SERVER_API_VERSION="${SERVER_API_VERSION:-$(sed -n 's/.*String MIN_API_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/java/src/main/java/cfmlotel/bridge/OtelBridge.java" | head -1)}"
+INSTRUMENTATION_VERSION="$(sed -n 's/^AGENT_VERSION="\${AGENT_VERSION:-\([^}]*\)}".*/\1/p' "$ROOT/build.sh" | head -1)"
+dest="$ROOT/dev/serverapi"
+mkdir -p "$dest"
+if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$SERVER_API_VERSION $INSTRUMENTATION_VERSION" ]]; then
+  echo "opentelemetry-api $SERVER_API_VERSION already in dev/serverapi"
+else
+  for a in api context instrumentation-api; do
+    if [[ "$a" == "instrumentation-api" ]]; then
+      url="https://repo1.maven.org/maven2/io/opentelemetry/instrumentation/opentelemetry-$a/$INSTRUMENTATION_VERSION/opentelemetry-$a-$INSTRUMENTATION_VERSION.jar"
+    else
+      url="https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-$a/$SERVER_API_VERSION/opentelemetry-$a-$SERVER_API_VERSION.jar"
+    fi
+    echo "fetching $url"
+    curl -fsSL "$url" -o "$tmp/otel-$a.jar"
+    want="$(curl -fsSL "$url.sha1" | cut -c1-40)"
+    got="$(sha1sum "$tmp/otel-$a.jar" | cut -c1-40)"
+    [[ "$want" == "$got" ]] || { echo "SHA-1 mismatch for $url" >&2; exit 1; }
+    # fixed names: dev/docker-compose.yml mounts them file by file
+    mv "$tmp/otel-$a.jar" "$dest/opentelemetry-$a.jar"
+  done
+  echo "$SERVER_API_VERSION $INSTRUMENTATION_VERSION" > "$dest/.version"
+  echo "opentelemetry-api/-context $SERVER_API_VERSION, opentelemetry-instrumentation-api $INSTRUMENTATION_VERSION -> dev/serverapi"
 fi
 
 # --- TestBox: the CFML unit specs in tests/specs ---------------------------------------------------------

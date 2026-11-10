@@ -12,6 +12,9 @@ component {
     this.mappings["/cfmlotel"] = variables.repoRoot;
     this.mappings["/testbox"] = "/opt/testbox";
     this.mappings["/specs"] = getDirectoryFromPath(getCurrentTemplatePath());
-    this.javaSettings = { loadPaths: [ variables.repoRoot & "/lib/", variables.repoRoot & "/lib/sdk/" ],
-        loadColdFusionClassPath: true, reloadOnChange: false };
+    // bridge-only on the acf2023-serverapi engine, as in tests/app/Application.cfc
+    variables.otelLoadPaths = (createObject("java", "java.lang.System").getenv("CFMLOTEL_BRIDGE_ONLY") ?: "") == "true"
+        ? directoryList(variables.repoRoot & "/lib/", false, "path", "cfml-otel-bridge-*.jar")
+        : [ variables.repoRoot & "/lib/", variables.repoRoot & "/lib/sdk/" ];
+    this.javaSettings = { loadPaths: variables.otelLoadPaths, loadColdFusionClassPath: true, reloadOnChange: false };
 }

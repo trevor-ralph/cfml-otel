@@ -27,6 +27,9 @@ component {
             // No javaagent: run cfml-otel's own SDK (add lib/sdk/ to loadPaths too). See README "Without the agent".
             "sdkFallback": false,
             "serviceName": "",
+            // Name each request by its ColdBox route ("GET /api/users/:id/") or, without one, its event
+            // ("GET main.index"), on the SERVER span and the agent's http.server.request.duration (otel.setRoute())
+            "setRoute": true,
             // Tag the agent's SERVER span with coldbox.event / coldbox.route attributes
             "traceEvents": true
         };

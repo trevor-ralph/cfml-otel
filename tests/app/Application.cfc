@@ -10,8 +10,12 @@ component {
     this.mappings["/cfmlotel"] = variables.repoRoot;
     // 1. Put the OTel API jars + bridge jar on this app's classpath. lib/sdk/ is only needed for sdkFallback
     //    (no javaagent); loading it with the agent attached is harmless, which the agent test jobs confirm.
-    this.javaSettings = { loadPaths: [ variables.repoRoot & "/lib/", variables.repoRoot & "/lib/sdk/" ],
-        loadColdFusionClassPath: true, reloadOnChange: false };
+    //    Bridge-only install (the acf2023-serverapi engine, CFMLOTEL_BRIDGE_ONLY): the server classpath already
+    //    has opentelemetry-api, so only the bridge jar is loaded.
+    variables.otelLoadPaths = (createObject("java", "java.lang.System").getenv("CFMLOTEL_BRIDGE_ONLY") ?: "") == "true"
+        ? directoryList(variables.repoRoot & "/lib/", false, "path", "cfml-otel-bridge-*.jar")
+        : [ variables.repoRoot & "/lib/", variables.repoRoot & "/lib/sdk/" ];
+    this.javaSettings = { loadPaths: variables.otelLoadPaths, loadColdFusionClassPath: true, reloadOnChange: false };
 
     // Test-only (not part of the wiring): the SQL Server container for the cfquery scenario, through each
     // engine's own SQL Server driver: Lucee's bundled Microsoft driver, ACF's built-in "MSSQLServer" driver
@@ -22,10 +26,15 @@ component {
     if (structKeyExists(server, "lucee")) {
         this.datasources["cfmlotel_mssql"] = {
             "class": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
-            "bundleName": "org.lucee.mssql",
             "connectionString": "jdbc:sqlserver://#variables.dbHost#:1433;DatabaseName=master;encrypt=false",
             "username": "sa", "password": variables.dbPassword
         };
+        // Lucee 8's bundled SQL Server extension loads the driver from Maven; its old OSGi bundle no longer resolves
+        if (val(listFirst(server.lucee.version, ".")) >= 8) {
+            this.datasources["cfmlotel_mssql"]["maven"] = "com.microsoft.sqlserver:mssql-jdbc:13.4.0.jre11";
+        } else {
+            this.datasources["cfmlotel_mssql"]["bundleName"] = "org.lucee.mssql";
+        }
     } else {
         this.datasources["cfmlotel_mssql"] = {
             "driver": "MSSQLServer", "host": variables.dbHost, "port": 1433, "database": "master",
@@ -45,6 +54,8 @@ component {
     function onApplicationStart() {
         application.otel = new cfmlotel.models.OTel({ "tracerName": "cfml-otel-tests", "tracerVersion": "0.1.0",
             "sdkFallback": (variables.jSystem.getenv("CFMLOTEL_SDK_FALLBACK") ?: "") == "true" });
+        // shared with tests/shared, an app without this module's mapping (README "One instance for several apps")
+        server.cfmlotelShared = application.otel;
         return true;
     }
 
@@ -71,7 +82,8 @@ component {
     // 6. Record unhandled errors on the SERVER span. Set the status first: in sdkFallback mode this call ends
     //    the SERVER span (no engine runs onRequestEnd() after onError()) and records the status it sees.
     function onError(exception, eventName) {
-        cfheader(statuscode = 500);
+        // ?errorPage200: an app whose error page goes out as 200 (the agent alone would record a success)
+        if (!structKeyExists(url, "errorPage200")) cfheader(statuscode = 500);
         application.otel.onError(arguments.exception);
         cfcontent(type = "application/json", reset = true);
         writeOutput(serializeJSON({ "error": structKeyExists(arguments.exception, "message") ? arguments.exception.message : "error" }));

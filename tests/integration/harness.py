@@ -30,6 +30,7 @@ class Target:
     service: str       # OTEL_SERVICE_NAME
     sdk: bool = False  # no javaagent: cfml-otel's own SDK (sdkFallback)
     agent_http: bool = True  # the agent's Apache HttpClient instrumentation is on (OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED)
+    server_api: bool = False  # opentelemetry-api comes from the server classpath; the apps load only the bridge jar
 
     @property
     def base(self) -> str:
@@ -52,15 +53,18 @@ class Target:
 
 
 TARGETS = {
+    "lucee8": Target("lucee8", "lucee8", 8888, 8981, "cfml-otel-lucee8"),
     "lucee7": Target("lucee7", "lucee7", 8888, 8971, "cfml-otel-lucee7"),
     "lucee6": Target("lucee6", "lucee6", 8888, 8961, "cfml-otel-lucee6"),
     "acf2025": Target("acf2025", "acf2025", 8500, 8951, "cfml-otel-acf2025"),
     "acf2023": Target("acf2023", "acf2023", 8500, 8941, "cfml-otel-acf2023"),
+    "lucee8-sdk": Target("lucee8-sdk", "lucee8-sdk", 8888, 8982, "cfml-otel-lucee8-sdk", sdk=True),
     "lucee7-sdk": Target("lucee7-sdk", "lucee7-sdk", 8888, 8972, "cfml-otel-lucee7-sdk", sdk=True),
     "lucee6-sdk": Target("lucee6-sdk", "lucee6-sdk", 8888, 8962, "cfml-otel-lucee6-sdk", sdk=True),
     "acf2025-sdk": Target("acf2025-sdk", "acf2025-sdk", 8500, 8952, "cfml-otel-acf2025-sdk", sdk=True),
     "acf2023-sdk": Target("acf2023-sdk", "acf2023-sdk", 8500, 8942, "cfml-otel-acf2023-sdk", sdk=True),
     "acf2025-nohttp": Target("acf2025-nohttp", "acf2025-nohttp", 8500, 8953, "cfml-otel-acf2025-nohttp", agent_http=False),
+    "acf2023-serverapi": Target("acf2023-serverapi", "acf2023-serverapi", 8500, 8943, "cfml-otel-acf2023-serverapi", server_api=True),
 }
 
 GRAFANA = os.environ.get("GRAFANA_URL") or ("http://localhost:3000" if LOCAL else "http://lgtm:3000")
@@ -70,7 +74,7 @@ READY_TIMEOUT = int(os.environ.get("READY_TIMEOUT_SECONDS", "900"))
 
 
 def engines() -> list[Target]:
-    names = [n.strip() for n in os.environ.get("ENGINES", "lucee7,lucee6,acf2025,acf2023").split(",") if n.strip()]
+    names = [n.strip() for n in os.environ.get("ENGINES", "lucee8,lucee7,lucee6,acf2025,acf2023").split(",") if n.strip()]
     unknown = [n for n in names if n not in TARGETS]
     if unknown:
         raise ValueError(f"unknown engine(s) {unknown}; known: {sorted(TARGETS)}")
@@ -241,6 +245,8 @@ class Run:
     fail: dict = field(default_factory=dict)   # unhandled-error request: trace id, parent id, HTTP status
     abort: dict = field(default_factory=dict)  # aborted and redirected requests: trace/parent ids, HTTP statuses
     stale: dict = field(default_factory=dict)  # stale.cfm's response
+    shared: dict = field(default_factory=dict)  # tests/shared (another app using this app's instance): trace/parent ids, response
+    route: dict = field(default_factory=dict)   # route.cfm (otel.setRoute()): trace/parent ids, response
 
     @property
     def scenarios(self) -> dict:
@@ -259,6 +265,9 @@ def drive(t: Target) -> Run:
     # Unhandled error through Application.cfc onError()
     fail = {"T": hex_id(16), "P": hex_id(8)}
     fail["status"] = http(f"{app}/fail.cfm", traceparent(fail["T"], fail["P"]))[0]
+    # the same error, but the error page goes out as 200: onError() must still mark the SERVER span
+    fail["T200"], fail["P200"] = hex_id(16), hex_id(8)
+    fail["status200"] = http(f"{app}/fail.cfm?errorPage200=1", traceparent(fail["T200"], fail["P200"]))[0]
 
     # Leak protection: leak a scope, then hammer the pool and make sure nobody inherits it
     get_json(f"{app}/leak.cfm")
@@ -278,6 +287,17 @@ def drive(t: Target) -> Run:
     # sdkFallback: a stale context on the thread is not the next SERVER span's parent (no traceparent sent)
     stale = get_json(f"{app}/stale.cfm")
 
+    # otel.setRoute(): the request is named by its route
+    route = {"T": hex_id(16), "P": hex_id(8)}
+    route["response"] = get_json(f"{app}/route.cfm", traceparent(route["T"], route["P"]))
+
+    # Another application in the JVM, without this module's mapping, using the test app's instance (server scope)
+    shared = {"T": hex_id(16), "P": hex_id(8)}
+    try:
+        shared["response"] = get_json(f"{t.base}/cfml-otel/tests/shared/index.cfm", traceparent(shared["T"], shared["P"]))
+    except AssertionError as e:
+        shared["response"] = {"error": str(e)}
+
     # ColdBox app (tests/coldbox): the repo loaded as an installed module, the way `box install` puts it
     cb: dict = {"error": ""}
     try:
@@ -287,6 +307,8 @@ def drive(t: Target) -> Run:
         cb["index"] = get_json(f"{cb_base}?event=main.index", traceparent(cb["T"], cb["P"]))
         cb["FT"], cb["FP"] = hex_id(16), hex_id(8)
         cb["fail_status"] = http(f"{cb_base}?event=main.fail", traceparent(cb["FT"], cb["FP"]))[0]
+        cb["NT"], cb["NP"] = hex_id(16), hex_id(8)
+        cb["notfound_status"] = http(f"{cb_base}?event=main.notFound", traceparent(cb["NT"], cb["NP"]))[0]
         cb["LT"] = hex_id(16)
         cb["logbox"] = get_json(f"{cb_base}?event=main.logbox", traceparent(cb["LT"], hex_id(8)))
         cb["leak"] = get_json(f"{cb_base}?event=main.leak")
@@ -312,4 +334,4 @@ def drive(t: Target) -> Run:
     except Exception as e:  # reported by the ColdBox tests, not a crash of the whole run
         cb["error"] = f"{type(e).__name__}: {e}"
 
-    return Run(t, trace_id, parent_id, response, leak_bad, cb, started, fail, abort, stale)
+    return Run(t, trace_id, parent_id, response, leak_bad, cb, started, fail, abort, stale, shared, route)

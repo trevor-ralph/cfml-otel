@@ -17,7 +17,11 @@ component {
     // ColdBox can't change the classpath, so the host app loads the module's jars (see README)
     // (lib/sdk/ only matters with sdkFallback; harmless with the agent, which is what the agent jobs check)
     variables.moduleRoot = "/opt/cbmodules/" & directoryList("/opt/cbmodules", false, "name")[1];
-    this.javaSettings = { loadPaths: [variables.moduleRoot & "/lib/", variables.moduleRoot & "/lib/sdk/"], loadColdFusionClassPath: true, reloadOnChange: false };
+    // bridge-only on the acf2023-serverapi engine, as in tests/app/Application.cfc
+    variables.otelLoadPaths = (createObject("java", "java.lang.System").getenv("CFMLOTEL_BRIDGE_ONLY") ?: "") == "true"
+        ? directoryList(variables.moduleRoot & "/lib/", false, "path", "cfml-otel-bridge-*.jar")
+        : [variables.moduleRoot & "/lib/", variables.moduleRoot & "/lib/sdk/"];
+    this.javaSettings = { loadPaths: variables.otelLoadPaths, loadColdFusionClassPath: true, reloadOnChange: false };
 
     COLDBOX_APP_ROOT_PATH = variables.appRoot;
     COLDBOX_APP_MAPPING = "cbapp";

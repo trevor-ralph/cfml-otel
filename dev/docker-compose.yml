@@ -1,7 +1,7 @@
 # Dev / integration stack. The host only needs Docker; run everything from this directory:
 #
 #   docker compose run --rm build                      # lib/ (bridge + OTel API jars), the javaagent, ColdBox
-#   docker compose up -d lgtm lucee7 lucee6 acf2025 acf2023     # + lucee7-sdk acf2025-sdk lucee6-sdk acf2023-sdk (no javaagent), acf2025-nohttp
+#   docker compose up -d lgtm lucee8 lucee7 lucee6 acf2025 acf2023     # + lucee8-sdk lucee7-sdk acf2025-sdk lucee6-sdk acf2023-sdk (no javaagent), acf2025-nohttp, acf2023-serverapi
 #   docker compose run --rm tests                      # pytest; ENGINES=lucee7,acf2023 to pick engines
 #
 # The repo is mounted read-only under each engine's web root at /cfml-otel. Tests live in tests/app (plain
@@ -23,6 +23,11 @@ x-otlp-env: &otlp-env
 x-otel-env: &otel-env
   <<: *otlp-env
   JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar"
+  # Tomcat metrics from JMX (README "Metrics"; test_app.py checks them on every agent engine)
+  OTEL_JMX_METRICS_EXPERIMENTAL_INCLUDED: "tomcat.*"
+  # cfml-otel's agent extension (lib/agent/, copied next to the agent by build.sh): identifies the database
+  # behind ACF's built-in macromedia JDBC drivers; on Lucee it has nothing to do
+  OTEL_JAVAAGENT_EXTENSIONS: "/otel/cfml-otel-agent-extension.jar"
 
 # Throwaway credentials for the local/CI SQL Server container, read by tests/app/Application.cfc
 x-mssql-env: &mssql-env
@@ -53,8 +58,18 @@ services:
       retries: 40
       start_period: 20s
 
+  lucee8:
+    image: lucee/lucee:8.0.0.304
+    depends_on: [lgtm]
+    ports: ["8981:8888"]
+    environment:
+      <<: [*otel-env, *mssql-env]
+      OTEL_SERVICE_NAME: "cfml-otel-lucee8"
+      OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED: "false"   # see lucee7
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+
   lucee7:
-    image: lucee/lucee:7.0.6.10
+    image: lucee/lucee:7.1.2.191
     depends_on: [lgtm]
     ports: ["8971:8888"]
     environment:
@@ -110,9 +125,36 @@ services:
     volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
               "./jdbc/mssql-jdbc.jar:/opt/coldfusion/cfusion/lib/mssql-jdbc.jar:ro"]   # Microsoft driver for the "Other" datasource
 
+  # ACF whose server classpath already has opentelemetry-api (another library in cfusion/lib depends on it), at the
+  # oldest version the bridge supports: the apps load only cfml-otel's bridge jar (CFMLOTEL_BRIDGE_ONLY, read
+  # by tests/app, tests/coldbox and tests/specs), the README's "Bridge-only install"
+  acf2023-serverapi:
+    image: adobecoldfusion/coldfusion2023:2023.0.26
+    depends_on: [lgtm]
+    ports: ["8943:8500"]
+    environment:
+      <<: [*otel-env, *mssql-env, *acf-env]
+      JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar -XX:-UseContainerSupport"   # see acf2023
+      OTEL_SERVICE_NAME: "cfml-otel-acf2023-serverapi"
+      CFMLOTEL_BRIDGE_ONLY: "true"
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./serverapi/opentelemetry-api.jar:/opt/coldfusion/cfusion/lib/opentelemetry-api.jar:ro",
+              "./serverapi/opentelemetry-context.jar:/opt/coldfusion/cfusion/lib/opentelemetry-context.jar:ro",
+              "./serverapi/opentelemetry-instrumentation-api.jar:/opt/coldfusion/cfusion/lib/opentelemetry-instrumentation-api.jar:ro"]
+
   # ---- no javaagent: cfml-otel's own SDK (sdkFallback), configured by the same OTEL_* variables --------
+  lucee8-sdk:
+    image: lucee/lucee:8.0.0.304
+    depends_on: [lgtm]
+    ports: ["8982:8888"]
+    environment:
+      <<: *otlp-env
+      OTEL_SERVICE_NAME: "cfml-otel-lucee8-sdk"
+      CFMLOTEL_SDK_FALLBACK: "true"
+    volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
+
   lucee7-sdk:
-    image: lucee/lucee:7.0.6.10
+    image: lucee/lucee:7.1.2.191
     depends_on: [lgtm]
     ports: ["8972:8888"]
     environment:
@@ -164,7 +206,7 @@ services:
     profiles: ["tools"]
     build: ../tests/integration
     environment:
-      ENGINES: "${ENGINES:-lucee7,lucee6,acf2025,acf2023}"   # also: lucee7-sdk, lucee6-sdk, acf2025-sdk, acf2023-sdk, acf2025-nohttp
+      ENGINES: "${ENGINES:-lucee8,lucee7,lucee6,acf2025,acf2023}"   # also: lucee8-sdk, lucee7-sdk, lucee6-sdk, acf2025-sdk, acf2023-sdk, acf2025-nohttp, acf2023-serverapi
       MSSQL: "${MSSQL:-1}"         # 0 skips the SQL Server checks (ARM, or no mssql service)
       GRAFANA_URL: "http://lgtm:3000"
     volumes: ["../tests/results:/results"]

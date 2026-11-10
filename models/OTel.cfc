@@ -52,14 +52,21 @@ component {
         var st = this.__state;
         // Class handle used on every scope open/close; looked up once instead of per span
         st.jThread = createObject("java", "java.lang.Thread");
-        // Resolve sibling components by full dotted path: relative `new Span()` can resolve against the
+        // Span and Instrument objects are copied from templates made here, never looked up by name per call:
+        // a lookup goes through the CALLING application's mappings, so an instance shared between applications
+        // (server scope) would break in an app without this module's mapping. Copying is also far cheaper on
+        // Lucee. The templates are resolved by full dotted path: relative `new Span()` can resolve against the
         // wrong template under the ACF thread bug described above.
         var myName = getMetadata(this).name;
         st.pkg = listLen(myName, ".") > 1 ? listDeleteAt(myName, listLen(myName, "."), ".") & "." : "";
+        st.spanProto = createObject("component", st.pkg & "Span");
+        st.instrumentProto = createObject("component", st.pkg & "Instrument");
         // The span handed out when there is nothing to record. It keeps no state, so one serves every caller.
-        st.noopSpan = createObject("component", st.pkg & "Span").init(this, "", "", false, false);
+        st.noopSpan = duplicate(st.spanProto).init(this, "", "", false, false);
         // Set once the app's onAbort() has called onAbort(): see onRedirecting()
         st.abortHookSeen = false;
+        // setRoute() logs once when opentelemetry-instrumentation-api isn't usable
+        st.routeWarned = false;
 
         if (!cfg.enabled) {
             st.reason = "disabled by configuration";
@@ -183,7 +190,7 @@ component {
         s["implementation"] = st.enabled ? st.bridge.implementationOf(st.otel) : "";
         s["reason"] = st.reason;
         s["bridgeVersion"] = st.bridgeVersion;
-        for (var k in ["apiVersion", "agentPresent", "agentVersion", "agentPath", "testedAgentVersion", "otherAgents", "jvmAgents"]) {
+        for (var k in ["apiVersion", "apiPath", "bundledApiVersion", "agentPresent", "agentVersion", "agentPath", "testedAgentVersion", "otherAgents", "jvmAgents", "agentExtension"]) {
             if (structKeyExists(d, k)) s[k] = d[k];
         }
         s["warnings"] = duplicate(d.warnings);
@@ -234,11 +241,62 @@ component {
             // ended without cleanup leaves its span current on the pooled thread.
             var s = this.startSpan(method & " " & route, {
                 "kind": "server", "attributes": attrs, "parent": st.bridge.extractRootContext(st.otel, carrier) });
-            request.__cfmlotelServer = { "span": s, "token": s.makeCurrent(), "thread": st.jThread.currentThread().getId() };
+            request.__cfmlotelServer = { "span": s, "token": s.makeCurrent(), "thread": st.jThread.currentThread().getId(),
+                "method": method, "route": "", "routePriority": 0 };
         } catch (any e) {
             // tracing must never break the request
         }
         return this;
+    }
+
+    /**
+     * Names the request by its route instead of its file: a front controller (Fusebox, FW/1, index.cfm?action=)
+     * otherwise shows every request as GET /index.cfm. Pass something low-cardinality that identifies the
+     * handler: "orders.checkout", "/api/users/{id}". Never put IDs or other per-request values in it.
+     *
+     * With the agent: renames the agent's SERVER span ("GET orders.checkout") and sets http.route on it and
+     * on the agent's http.server.request.duration metric (needs lib/'s opentelemetry-instrumentation-api).
+     * With the SDK fallback: the same on cfml-otel's own SERVER span. Otherwise: http.route on the current span.
+     * The first call in a request wins; a later one only replaces it with a longer route (the agent's rule).
+     * Returns true when the route reached the SERVER span.
+     */
+    public boolean function setRoute(required string route) {
+        return this._setRoute(arguments.route, false);
+    }
+
+    /** @hint internal: framework=true for a framework's automatic route (ColdBox), which setRoute() overrides */
+    public boolean function _setRoute(required string route, boolean framework = false) {
+        var st = this.__state;
+        var r = trim(arguments.route);
+        if (!st.enabled || !len(r)) return false;
+        try {
+            var srv = this._serverOnThisThread();
+            if (!structIsEmpty(srv)) {
+                // sdkFallback: our own SERVER span, with the agent's precedence rule (application over framework;
+                // at the same level the first route stays unless a longer one comes)
+                var priority = arguments.framework ? 1 : 2;
+                if (priority > srv.routePriority || (!arguments.framework && priority == srv.routePriority
+                        && len(r) > len(srv.route))) {
+                    srv.routePriority = priority;
+                    srv.route = r;
+                    srv.span.setAttribute("http.route", r).updateName(srv.method & " " & r);
+                }
+                return true;
+            }
+            if (st.mode == "agent") {
+                var failed = st.bridge.setServerRoute(r, arguments.framework);
+                if (!len(failed)) return true;
+                if (!st.routeWarned) {
+                    st.routeWarned = true;
+                    writeLog(type = "warning", file = "cfml-otel", text = "cfml-otel setRoute(): " & failed
+                        & ". Until that changes, setRoute() only sets http.route on the current span (logged once).");
+                }
+            }
+            this.currentSpan().setAttribute("http.route", r);
+        } catch (any ignored) {
+            // naming must never break the request
+        }
+        return false;
     }
 
     /** @hint internal: ends the fallback SERVER span (status code from the response; 5xx = error) */
@@ -248,17 +306,25 @@ component {
         structDelete(request, "__cfmlotelServer");
         try {
             var code = this.__state.bridge.responseStatus(getPageContext().getResponse());
+            var deferred = structKeyExists(srv, "statusFinal");
             if (structKeyExists(srv, "statusCode") && srv.statusCode > 0) code = srv.statusCode;
+            // onError(endRequest=false): an error handler has run since, so whatever the response says is final
+            else if (deferred) {}
             // after an exception, a non-error status only means the app hadn't set one yet: unknown, leave it out
             else if (structKeyExists(srv, "errorType") && code < 400) code = 0;
             // a redirect is about to set the status (onRedirecting()): what the response says now isn't it
             else if (structKeyExists(srv, "statusUnknown")) code = 0;
-            if (code > 0) {
-                srv.span.setAttribute("http.response.status_code", code);
-                if (code >= 500) {
-                    if (!structKeyExists(srv, "errorType")) srv.span.setAttribute("error.type", toString(code));
-                    srv.span.setStatus("ERROR");
+            if (code > 0) srv.span.setAttribute("http.response.status_code", code);
+            if (deferred) {
+                // the error was handled: only a 5xx (or no readable status) makes the request a failure
+                if (code >= 500 || code == 0) {
+                    srv.span.setAttribute("error.type", srv.errorType);
+                    srv.span.setStatus("ERROR", srv.errorMessage);
                 }
+            } else if (code >= 500 && !structKeyExists(srv, "errorType")) {
+                // (after onError() the span already carries the exception's error.type and ERROR status)
+                srv.span.setAttribute("error.type", toString(code));
+                srv.span.setStatus("ERROR");
             }
         } catch (any ignored) {
         } finally {
@@ -320,18 +386,18 @@ component {
     public any function startSpan(required string name, struct options = {}) {
         var st = this.__state;
         if (!st.enabled) return st.noopSpan;
-        var kind =structKeyExists(arguments.options, "kind") ? arguments.options.kind : "internal";
+        var kind = structKeyExists(arguments.options, "kind") ? arguments.options.kind : "internal";
         var attributes = structKeyExists(arguments.options, "attributes") ? arguments.options.attributes : {};
         var parent = structKeyExists(arguments.options, "parent") ? arguments.options.parent : "";
         var js = st.bridge.startSpan(st.tracer, arguments.name, kind, attributes, parent);
-        return createObject("component", st.pkg & "Span").init(this, st.bridge, js, true, true);
+        return duplicate(st.spanProto).init(this, st.bridge, js, true, true);
     }
 
     /** The current span (usually the agent's SERVER span or an enclosing span()). end() on it is ignored. */
     public any function currentSpan() {
         var st = this.__state;
         if (!st.enabled) return st.noopSpan;
-        return createObject("component", st.pkg & "Span").init(this, st.bridge, st.bridge.currentSpan(), false, true);
+        return duplicate(st.spanProto).init(this, st.bridge, st.bridge.currentSpan(), false, true);
     }
 
     public any function setAttributes(required struct attributes) {
@@ -679,31 +745,46 @@ component {
      * Call from Application.cfc onError(). Marks the current span as failed and cleans up scopes.
      * Neither engine runs onRequestEnd() after onError(), so in sdkFallback mode this also ends the SERVER
      * span: set the response status (cfheader statuscode=...) BEFORE calling it, or pass statusCode.
+     *
+     * endRequest=false is for a framework error handler that runs AFTER this call and may still choose the
+     * status (ColdBox's exceptionHandler turning a not-found error into a 404, say): the exception is recorded
+     * and leaked scopes are closed, but the request goes on. Call onRequestEnd() once the status is final;
+     * the span is marked ERROR only if that status is 5xx (with the agent, the agent decides from the status).
      */
-    public void function onError(required any exception, numeric statusCode = 0) {
+    public void function onError(required any exception, numeric statusCode = 0, boolean endRequest = true) {
         if (!this.__state.enabled) return;
         var err = arguments.exception;
         // onError wraps the real error in a struct with a rootCause key on both engines
         if (isStruct(err) && structKeyExists(err, "rootCause")) err = err.rootCause;
+        var message = isStruct(err) && structKeyExists(err, "message") ? err.message : "";
         var srv = this._serverOnThisThread();
         if (!structIsEmpty(srv)) {
-            // the request thread's fallback SERVER span: record here, then end it (nothing else will)
+            // the request thread's fallback SERVER span: record here, then end it (nothing else will) unless the
+            // caller ends the request later
             try {
                 srv.span.recordException(err);
                 var et = isStruct(err) && structKeyExists(err, "type") && len(err.type) ? err.type : "_OTHER";
-                srv.span.setAttribute("error.type", et);
-                srv.span.setStatus("ERROR", isStruct(err) && structKeyExists(err, "message") ? err.message : "");
                 srv.errorType = et;
+                srv.errorMessage = message;
+                if (arguments.endRequest) {
+                    srv.span.setAttribute("error.type", et);
+                    srv.span.setStatus("ERROR", message);
+                } else {
+                    // the response's status at onRequestEnd() is the handler's final answer
+                    srv.statusFinal = true;
+                }
                 if (arguments.statusCode > 0) srv.statusCode = arguments.statusCode;
             } catch (any ignored) {}
-            this.onRequestEnd();
+            if (arguments.endRequest) this.onRequestEnd();
+            else this.closeLeakedScopes("after an error");
             return;
         }
-        this.onRequestEnd();
+        if (arguments.endRequest) this.onRequestEnd();
+        else this.closeLeakedScopes("after an error");
         try {
             var s = this.currentSpan();
             s.recordException(err);
-            s.setStatus("ERROR", isStruct(err) && structKeyExists(err, "message") ? err.message : "");
+            if (arguments.endRequest) s.setStatus("ERROR", message);
         } catch (any ignored) {}
     }
 
@@ -758,14 +839,14 @@ component {
     /** @hint internal */
     public any function _instrument(type, valueType, name, description, unit) {
         var st = this.__state;
-        if (!st.enabled) return createObject("component", st.pkg & "Instrument").init("", "", false);
+        if (!st.enabled) return duplicate(st.instrumentProto).init("", "", false);
         var key = lCase(arguments.type & "|" & arguments.valueType & "|" & arguments.name);
         if (!structKeyExists(st.instruments, key)) {
             lock name="cfmlotel.instruments" type="exclusive" timeout="5" {
                 if (!structKeyExists(st.instruments, key)) {
                     var ji = st.bridge.instrument(st.meter, arguments.type, arguments.valueType,
                         arguments.name, arguments.description, arguments.unit);
-                    st.instruments[key] = createObject("component", st.pkg & "Instrument").init(st.bridge, ji, true, lCase(arguments.valueType), arguments.name);
+                    st.instruments[key] = duplicate(st.instrumentProto).init(st.bridge, ji, true, lCase(arguments.valueType), arguments.name);
                 }
             }
         }

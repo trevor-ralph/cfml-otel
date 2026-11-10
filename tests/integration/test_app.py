@@ -30,6 +30,14 @@ def test_startup_check_reports_versions_and_warnings(run, engine):
     assert s["agentVersion"] == s["testedAgentVersion"], s
     assert s["agentPath"] == "/otel/opentelemetry-javaagent.jar", s
     assert s["otherAgents"] == [], s
+    # every agent engine loads cfml-otel's agent extension (OTEL_JAVAAGENT_EXTENSIONS in dev/docker-compose.yml)
+    assert s["agentExtension"] is True, s
+    if run.target.server_api:
+        # bridge-only install: the server's (older) opentelemetry-api, reported as such, once, as info
+        assert s["apiVersion"] == "1.38.0" and s["apiPath"].endswith("/cfusion/lib/opentelemetry-api.jar"), s
+        assert [(w["code"], w["level"]) for w in s["warnings"]] == [("SERVER_OTEL_API", "info")], s["warnings"]
+        return
+    assert s["apiVersion"] == s["bundledApiVersion"] and s["apiPath"].endswith(f"/lib/opentelemetry-api-{s['apiVersion']}.jar"), s
     # Lucee 6 keeps the agent's HttpClient instrumentation on as the LDEV-6519 control (dev/docker-compose.yml)
     expected = ["LUCEE_HTTPCLIENT_INSTRUMENTATION"] if engine == "lucee6" else []
     assert [w["code"] for w in s["warnings"]] == expected, s["warnings"]
@@ -206,14 +214,14 @@ def test_cfquery_spans_identify_sql_server(run, named):
     _needs_db(run)
     db = named["s18.db"]
     kids = [s for s in harness.spans(run.trace_id) if s.parent == db.id and s.kind == "SPAN_KIND_CLIENT"]
+    # On ACF this is the built-in driver (jdbc:macromedia:sqlserver:// URLs), which the agent alone reports as
+    # other_sql without host, port or database: cfml-otel's agent extension (lib/agent/) identifies it.
+    # README: "Database queries (cfquery)".
     systems = {_db_attr(s, "db.system.name", "db.system") for s in kids}
-    if run.target.is_acf and systems == {"other_sql"}:
-        # ACF's built-in driver uses jdbc:macromedia:sqlserver:// URLs, which the agent's JDBC URL parser
-        # doesn't recognise: db.system is other_sql and server.address / server.port / db.name are missing.
-        # Queries are still traced (see the test above). README: "Database queries (cfquery)".
-        pytest.xfail("agent doesn't parse ACF's jdbc:macromedia:sqlserver:// URLs (db.system=other_sql)")
     assert systems == {"mssql"}, {s.name: _db_attr(s, "db.system.name", "db.system") for s in kids}
-    assert all(s.attrs.get("server.address") == "mssql" for s in kids), [s.attrs for s in kids]
+    for s in kids:
+        assert s.attrs.get("server.address") == "mssql" and s.attrs.get("server.port") == 1433, s.attrs
+        assert _db_attr(s, "db.namespace", "db.name") == "master", s.attrs
 
 
 def test_cfquery_acf_microsoft_driver_identifies_sql_server(run, named):
@@ -244,6 +252,18 @@ def test_metrics_reach_prometheus(run):
     missing = [w for w in ("calls", "latency", "level", "inflight")
                if not any(n.startswith(f"cfmlotel_test_{w}") for n in names)]
     assert not missing, names
+
+
+def test_tomcat_jmx_metrics_reach_prometheus(run):
+    """OTEL_JMX_METRICS_EXPERIMENTAL_INCLUDED=tomcat.* (dev/docker-compose.yml, README "Metrics"): the agent reads the engine's
+    embedded Tomcat over JMX, on Lucee and ACF alike. Sessions are ACF only: Lucee keeps its own session scope."""
+    if run.target.sdk:
+        pytest.skip("JMX metrics come from the agent")
+    names = harness.prometheus_names(f'{{__name__=~"tomcat_.*",job="{run.target.service}"}}')
+    expected = ["tomcat_thread_count", "tomcat_thread_busy_count", "tomcat_request_count_total", "tomcat_error_count_total"]
+    if run.target.is_acf:
+        expected.append("tomcat_session_active_count")
+    assert not [n for n in expected if n not in names], names
 
 
 def test_cflog_reaches_loki_correlated_with_the_trace(run):

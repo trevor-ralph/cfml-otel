@@ -61,6 +61,16 @@ public final class OtelBridge {
   /** The javaagent release the integration tests run against (build.sh AGENT_VERSION). */
   public static final String TESTED_AGENT_VERSION = "2.33.1";
 
+  /** The opentelemetry-api version lib/ ships (build.sh API_VERSION, pom.xml otel.api.version). */
+  public static final String BUNDLED_API_VERSION = "1.67.0";
+
+  /**
+   * The oldest opentelemetry-api the bridge works with, for servers that already have the API on their
+   * classpath (README "Bridge-only install"). 1.38.0 added the synchronous gauges. CI compiles the bridge
+   * against it and runs the acf2023-serverapi engine on it.
+   */
+  public static final String MIN_API_VERSION = "1.38.0";
+
   private static final AtomicLong SCOPE_SEQ = new AtomicLong();
 
   private OtelBridge() {}
@@ -311,6 +321,27 @@ public final class OtelBridge {
       ((Span) span).setStatus(sc);
     } else {
       ((Span) span).setStatus(sc, description);
+    }
+  }
+
+  /**
+   * The request's route, for the agent's SERVER span and its http.server.request.duration metric (see
+   * ServerRoute). Returns "" when the call went through, else why not: opentelemetry-instrumentation-api
+   * isn't on the classpath, or it doesn't match the API version in use.
+   */
+  public static String setServerRoute(String route, boolean framework) {
+    try {
+      if (ServerRoute.update(route, framework)) return "";
+      String inst = ServerRoute.location();
+      String api = Diagnostics.location(io.opentelemetry.api.GlobalOpenTelemetry.class);
+      if (!inst.isEmpty() && !api.isEmpty() && !Diagnostics.dir(inst).equals(Diagnostics.dir(api))) {
+        return "the javaagent didn't take the route: it only does when opentelemetry-instrumentation-api (" + inst
+            + ") is loaded by the same class loader as opentelemetry-api (" + api + "). Put it next to the API"
+            + " jar (with a server's own API, in that folder rather than in loadPaths)";
+      }
+      return "the javaagent didn't take the route: there is no agent SERVER span in this context";
+    } catch (LinkageError e) {
+      return "opentelemetry-instrumentation-api isn't usable here (" + e + "): add lib/'s jar to the loadPaths";
     }
   }
 

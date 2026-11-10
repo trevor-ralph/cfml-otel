@@ -13,6 +13,12 @@
   <properties>
     <!-- Keep at or below the OTel javaagent's bundled SDK version (agent 2.33.1 -> 1.67.0). -->
     <otel.api.version>1.67.0</otel.api.version>
+    <!-- The SDK fallback's jars. Normally the API version; the CI min-API check compiles the bridge against an older
+         API with this left at the build's version (see .github/workflows/ci.yml). -->
+    <otel.sdk.version>${otel.api.version}</otel.sdk.version>
+    <!-- opentelemetry-instrumentation-api, for otel.setRoute(): released with the javaagent, same version as build.sh
+         AGENT_VERSION (tests/check-versions.sh). build.sh puts the jar in lib/. -->
+    <otel.instrumentation.version>2.33.1</otel.instrumentation.version>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
@@ -25,25 +31,37 @@
       <version>${otel.api.version}</version>
       <scope>provided</scope>
     </dependency>
+    <!-- otel.setRoute() (ServerRoute.java): the javaagent bridges this API's route updates to its SERVER span. Only
+         the jar itself is needed at runtime (build.sh puts it in lib/); its incubator/semconv deps aren't. -->
+    <dependency>
+      <groupId>io.opentelemetry.instrumentation</groupId>
+      <artifactId>opentelemetry-instrumentation-api</artifactId>
+      <version>${otel.instrumentation.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-api-incubator</artifactId></exclusion>
+        <exclusion><groupId>io.opentelemetry.semconv</groupId><artifactId>opentelemetry-semconv</artifactId></exclusion>
+      </exclusions>
+    </dependency>
     <!-- SDK fallback (opt-in, sdkFallback): copied to lib/sdk/ by build.sh, loaded only when an app adds it.
          No OkHttp/Kotlin and no JDK sender (ACF's Java runtime has no java.net.http): the bridge's own
          UrlConnectionHttpSender is the OTLP/HTTP sender. Same version as the API. -->
     <dependency>
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-sdk</artifactId>
-      <version>${otel.api.version}</version>
+      <version>${otel.sdk.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-sdk-extension-autoconfigure</artifactId>
-      <version>${otel.api.version}</version>
+      <version>${otel.sdk.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-exporter-otlp</artifactId>
-      <version>${otel.api.version}</version>
+      <version>${otel.sdk.version}</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>
@@ -89,7 +107,7 @@
             <configuration>
               <outputDirectory>${project.build.directory}/sdk</outputDirectory>
               <includeScope>provided</includeScope>
-              <excludeArtifactIds>opentelemetry-api,opentelemetry-context,opentelemetry-common</excludeArtifactIds>
+              <excludeArtifactIds>opentelemetry-api,opentelemetry-context,opentelemetry-common,opentelemetry-instrumentation-api</excludeArtifactIds>
             </configuration>
           </execution>
         </executions>

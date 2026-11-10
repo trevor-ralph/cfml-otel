@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>cfmlotel</groupId>
+  <artifactId>cfml-otel-agent-extension</artifactId>
+  <version>0.2.0</version>
+  <packaging>jar</packaging>
+  <description>OpenTelemetry javaagent extension: identifies the database behind Adobe ColdFusion's built-in
+    (macromedia / DataDirect) JDBC drivers. Loaded with -Dotel.javaagent.extensions=.</description>
+
+  <properties>
+    <!-- The javaagent this extension is built and tested against: build.sh AGENT_VERSION
+         (tests/check-versions.sh). It reaches agent internals by name, so it is versioned with the agent. -->
+    <otel.instrumentation.version>2.33.1</otel.instrumentation.version>
+    <!-- 8, not the bridge's 11: the advice is copied into the drivers' own (Java 8) class files, where code
+         from a newer javac (invokedynamic string concatenation) isn't valid -->
+    <maven.compiler.release>8</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <!-- Provided by the javaagent at runtime -->
+    <dependency>
+      <groupId>io.opentelemetry.javaagent</groupId>
+      <artifactId>opentelemetry-javaagent-extension-api</artifactId>
+      <version>${otel.instrumentation.version}-alpha</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.13.4</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- Tests only: the agent's JDBC URL parser, to check the rewritten URLs parse as expected -->
+    <dependency>
+      <groupId>io.opentelemetry.instrumentation</groupId>
+      <artifactId>opentelemetry-jdbc</artifactId>
+      <version>${otel.instrumentation.version}-alpha</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>cfml-otel-agent-extension</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.16.0</version>
+        <configuration>
+          <compilerArgs><arg>-Xlint:all,-options</arg></compilerArgs>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.3</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

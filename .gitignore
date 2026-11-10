@@ -1,13 +1,16 @@
 # build outputs (run ./build.sh; publishing to ForgeBox must build lib/ first)
 java/target/
+agent-extension/target/
 lib/*.jar
 lib/sdk/
+lib/agent/*.jar
 
 # downloaded / generated
 dev/agent/
 dev/coldbox/
 dev/testbox/
 dev/jdbc/
+dev/serverapi/
 tests/results/
 
 # files ACF writes into a mounted web root

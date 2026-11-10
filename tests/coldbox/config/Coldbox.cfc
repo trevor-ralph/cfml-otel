@@ -7,7 +7,9 @@ component {
             "handlerCaching": true,
             "eventCaching": false,
             // the repo, mounted as an installed module (see tests/coldbox/Application.cfc)
-            "modulesExternalLocation": ["/cbmodules"]
+            "modulesExternalLocation": ["/cbmodules"],
+            // handlers/Main.cfc onAppError: the SERVER span records the status this handler chooses
+            "exceptionHandler": "main.onAppError"
         };
 
         // LogBox through its CFAppender (cflog underneath): test_coldbox.py checks the agent ships it to Loki
