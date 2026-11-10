@@ -494,14 +494,21 @@ Sources: FusionReactor's [OTel migration guide](https://docs.fusionreactor.io/Ge
 Everything runs in containers; the host only needs Docker (Linux, macOS or Windows). From `dev/`:
 
 ```bash
-docker compose run --rm build                                    # lib/, the javaagent, ColdBox (checksum-verified)
+docker compose run --rm build                                    # lib/, the javaagent, ColdBox, TestBox (checksum-verified)
 docker compose up -d lgtm mssql lucee7 lucee6 acf2025 acf2023    # Grafana LGTM, SQL Server 2022, the engines
 docker compose run --rm tests                                    # pytest; e.g. ENGINES=lucee7,acf2023
 ```
 
-The no-agent engines (SDK fallback) are separate services: `docker compose up -d lucee7-sdk acf2025-sdk`, then
-`ENGINES=lucee7-sdk,acf2025-sdk docker compose run --rm tests`. Unit tests for the bridge (startup checks, HTTP
-attributes, the OTLP sender) run during the build.
+Other engines are separate services: `lucee7-sdk`, `lucee6-sdk`, `acf2025-sdk` and `acf2023-sdk` run without
+the agent (SDK fallback), and `acf2025-nohttp` runs ACF with the agent's HttpClient instrumentation off. Start
+them with `docker compose up -d <names>`, then run e.g. `ENGINES=lucee7-sdk,acf2025-sdk MSSQL=0 docker compose run --rm tests`.
+
+Two kinds of unit tests run too:
+- JUnit tests for the bridge (startup checks, HTTP attributes, the OTLP sender), during the build.
+- [TestBox](https://testbox.ortusbooks.com/) specs for the CFML side ([tests/specs](tests/specs)): no-op and
+  broken-bridge behaviour, `span()` results and exceptions, scope ordering, propagation, the HTTP helpers,
+  conversions. They run inside every engine container, with or without the agent, as part of the pytest run.
+  TestBox 7.2.2 and its globber dependency are fetched SHA-256-pinned by `dev/fetch-test-deps.sh`.
 
 On Linux you can also run `./build.sh` and `bash dev/fetch-test-deps.sh` directly (bash, curl, Docker).
 
@@ -534,9 +541,12 @@ Licences accepted by the dev stack, for development and testing only:
 Python images support x86-64 and ARM. The ACF and SQL Server images are x86-64 only. On ARM, run the Lucee
 engines without SQL Server: `MSSQL=0 docker compose run --rm --no-deps tests` with `ENGINES=lucee7,lucee6`.
 
-[CI](.github/workflows/ci.yml) runs the suite on every push and pull request: one x86-64 job per engine,
-and Lucee 7 and 6 on GitHub's ARM runners. Pushing a `v*` tag that matches `box.json`'s version runs
-[release.yml](.github/workflows/release.yml), which builds and publishes the release zip.
+[CI](.github/workflows/ci.yml) runs the suite on every push and pull request: one x86-64 job per engine (with the
+agent, without it, and ACF with the agent's HttpClient instrumentation off), plus Lucee on GitHub's ARM runners.
+Pushing a `v*` tag that matches `box.json`'s version runs [release.yml](.github/workflows/release.yml), which
+builds and publishes the release zip, with the version's [CHANGELOG.md](CHANGELOG.md) section as the notes.
+GitHub's CodeQL code scanning (default setup) analyses the Java bridge, the Python test harness and the
+workflows; CodeQL has no CFML support.
 
 ## Roadmap
 
@@ -547,7 +557,7 @@ and Lucee 7 and 6 on GitHub's ARM runners. Pushing a `v*` tag that matches `box.
   so Lucee `cfhttp` / `cfthread` propagate natively.
 * Lucee extension (`.lex`) packaging with OSGi manifests that resolve under Felix.
 * Lucee 5.4 (maybe). ACF 2021 is out: Adobe's core support (and security patches) ended Nov 2025.
-* TestBox unit specs (behaviour without the agent). ColdBox 7 coverage, if anyone needs it.
+* ColdBox 7 coverage, if anyone needs it.
 
 ## License and acknowledgements
 

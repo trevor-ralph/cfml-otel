@@ -6,6 +6,7 @@ lib/sdk/
 # downloaded / generated
 dev/agent/
 dev/coldbox/
+dev/testbox/
 dev/jdbc/
 tests/results/
 spike/agent/
