@@ -9,9 +9,6 @@ dev/coldbox/
 dev/testbox/
 dev/jdbc/
 tests/results/
-spike/agent/
-spike/jars/
-spike/results/
 
 # files ACF writes into a mounted web root
 WEB-INF/cfclasses/

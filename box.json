@@ -14,7 +14,7 @@
         { "type": "lucee", "version": ">=6.2" },
         { "type": "adobe", "version": ">=2023" }
     ],
-    "ignore": [ "**/.*", "java", "dev", "spike", "tests", "build.sh" ],
+    "ignore": [ "**/.*", "java", "dev", "docs", "tests", "build.sh" ],
     "scripts": {
         "build": "!bash build.sh"
     }

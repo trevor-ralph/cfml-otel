@@ -3,6 +3,16 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
+## [Unreleased]
+
+### Tests
+- TestBox unit specs for the CFML side (`tests/specs`), run on every engine; CodeQL code scanning for the
+  Java bridge, the Python test harness and the workflows.
+
+### Removed
+- The original classloading spike harness (`spike/`). Its findings are kept as
+  [docs/classloading-spike.md](docs/classloading-spike.md); the integration suite covers all of them.
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

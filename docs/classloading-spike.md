@@ -1,5 +1,9 @@
 # Classloading spike: CFML -> OTel API -> javaagent SDK
 
+> **Historical record.** This is the throwaway experiment (2026-11-07) that settled cfml-otel's design,
+> before any of the library existed. The probe harness has since been removed; every finding below is now
+> covered by the integration suite in [tests/](../tests), which is the source of truth.
+
 **Question:** if a CFML app calls the OpenTelemetry Java API while the OTel javaagent is attached,
 do the calls reach the agent's SDK (same traces, same exporter), or silently no-op?
 
@@ -76,17 +80,9 @@ in every "yes" row. `GlobalOpenTelemetry.get()` returns
 7. **ACF Docker quirk:** `JAVA_TOOL_OPTIONS` also attaches the agent to ACF's setup JVM at start-up.
    Harmless for the spike; in production put `-javaagent` in `jvm.config` `java.args` instead.
 
-## Not covered yet
+## Since then
 
-Metrics and logs (log4j appender / `cflog` trace correlation), `cfquery` JDBC spans (no DB in the
-spike), Lucee 5 / ACF 2021–2023, ACF behind an IIS/Apache connector, behaviour when the app's API
-jar is *newer* than the agent, and the no-agent SDK fallback path.
-
-## Re-running
-
-```bash
-./fetch-jars.sh            # agent + API jars from Maven Central, SHA-1 verified
-docker compose up -d       # Grafana at http://localhost:3000
-pwsh ./run-probes.ps1      # matrix + Tempo span trees; raw JSON in results/
-docker compose down
-```
+Everything listed here as untested in the spike is now in the integration suite: metrics, logs (`cflog`
+is captured by the agent), `cfquery` JDBC spans (SQL Server 2022), ACF 2023, and the no-agent SDK fallback.
+Finding 6 was resolved with option (a), `otel.http()` / `otel.httpSpan()`. Still untested: Lucee 5, an app
+API jar newer than the agent, and ACF behind an IIS/Apache connector.

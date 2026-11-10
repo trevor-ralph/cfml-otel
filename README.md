@@ -40,7 +40,7 @@ CFML  ──>  models/OTel.cfc  ──>  lib/cfml-otel-bridge.jar  ──>  OTel
 * The agent hands back hidden / non-public bridge classes. CFML engines invoke Java methods by reflecting
   on the *concrete* class, which fails on Lucee (`NoClassDefFoundError` on 6.2, `IllegalAccessException`
   on 7.0). The small **bridge jar** calls everything through the public API interfaces, so CFML never
-  touches an OTel object directly. (Background: [spike/FINDINGS.md](spike/FINDINGS.md).)
+  touches an OTel object directly. (Background: [docs/classloading-spike.md](docs/classloading-spike.md).)
 * Without the agent the API is a no-op, and so is every cfml-otel call, unless you turn on the opt-in
   [SDK fallback](#without-the-javaagent-sdk-fallback), which runs cfml-otel's own SDK. If the jars aren't on
   the classpath, cfml-otel disables itself. Either way, the [startup check](#startup-checks) says what it
