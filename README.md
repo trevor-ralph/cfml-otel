@@ -14,6 +14,11 @@ OTLP to a Collector / Grafana Alloy and on to Tempo, Loki and Mimir/Prometheus (
 > Status: **0.1.0 scaffold**. Integration-tested (plain CFML, ColdBox 8.3, SQL Server 2022) on Lucee 7.0.6,
 > Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26 with agent 2.33.1 — see [Testing](#testing).
 
+> **Not fully compatible with ACF's default SQL Server driver** (Adobe's built-in "Microsoft SQL Server"
+> driver, `jdbc:macromedia:sqlserver://`). Queries are traced, but not identified as SQL Server: no
+> database host, port or name, and `db.system=other_sql`. Use Microsoft's JDBC driver as an "Other"
+> datasource for full database attributes; see [Database queries](#database-queries-cfquery).
+
 ```cfml
 application.otel.span("checkout", function(span) {
     span.setAttributes({ "cart.items": arrayLen(cart.items), "customer.tier": customer.tier });
@@ -209,7 +214,7 @@ driver, ACF's built-in "Microsoft SQL Server" driver):
 - `db.statement` is sanitized: literal values are replaced with `?` (`VALUES (1, 'first')` becomes
   `VALUES (?, ?)`), so data from queries isn't recorded by default.
 
-**ACF's built-in SQL Server driver loses the database identity.** It connects with
+**Not compatible with ACF's default SQL Server driver ("macromedia" / DataDirect).** It connects with
 `jdbc:macromedia:sqlserver://...` URLs, which the agent's JDBC URL parser doesn't recognise. Queries are
 still traced, with correct SQL, operation, table and nesting. But `db.system` is `other_sql` instead of
 `mssql`, and `server.address`, `server.port` and `db.name` are missing. So Grafana's service graph and
