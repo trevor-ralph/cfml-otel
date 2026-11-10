@@ -12,8 +12,8 @@ attributes, metrics, OTel logs correlated with the trace, and context propagatio
 OTLP to a Collector / Grafana Alloy and on to Tempo, Loki and Mimir/Prometheus (or any OTLP backend).
 
 > Status: **0.1.0 scaffold**. Integration-tested (plain CFML, ColdBox 8.3, SQL Server 2022) on Lucee 7.0.6,
-> Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26 with agent 2.33.1, and without the agent on Lucee 7 and
-> ACF 2025 ([SDK fallback](#without-the-javaagent-sdk-fallback)) — see [Testing](#testing).
+> Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26, with agent 2.33.1 and without any agent
+> ([SDK fallback](#without-the-javaagent-sdk-fallback)) — see [Testing](#testing).
 
 > **Not fully compatible with ACF's default SQL Server driver** (Adobe's built-in "Microsoft SQL Server"
 > driver, `jdbc:macromedia:sqlserver://`). Queries are traced, but not identified as SQL Server: no
@@ -127,7 +127,7 @@ does **not** work: the OTel manifests import `java.*` packages that Lucee's Feli
 
 #### ColdBox
 
-Integration-tested with ColdBox 8.3 on all four engines, and on Lucee 7 and ACF 2025 without the agent ([tests/coldbox](tests/coldbox)).
+Integration-tested with ColdBox 8.3 on all four engines, with and without the agent ([tests/coldbox](tests/coldbox)).
 
 `box install` the module, then still add `modules/cfml-otel/lib/` to `this.javaSettings.loadPaths`.
 ColdBox can't change the classpath for you. Configure it in `config/Coldbox.cfc` under `moduleSettings["cfmlotel"]`
@@ -152,7 +152,8 @@ cfml-otel can run its own OpenTelemetry SDK. It's **opt-in**:
 3. Configure it with the same `OTEL_*` environment variables (or `-Dotel.*` system properties) the agent
    reads: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, sampler, batch
    settings, and so on. It exports over OTLP `http/protobuf`, like the agent; gRPC isn't supported.
-   `service.name` defaults to the `serviceName` option, else the application name.
+   `service.name`: the `serviceName` option if set (it wins over `OTEL_SERVICE_NAME`, so apps sharing a JVM
+   can differ), else `OTEL_SERVICE_NAME`, else the application name.
 4. Call `onRequestStart()` / `onRequestEnd()` / `onError()` and, in `onApplicationEnd()`, `shutdown()`, as in
    the example above. The ColdBox interceptor does the request calls for you.
 
@@ -177,12 +178,14 @@ same configuration is safe on servers that do have the agent. `otel.status().mod
 - Neither engine runs `onRequestEnd()` after `onError()`, so `onError()` ends the SERVER span. Set the
   response status before calling it, or pass it: `otel.onError(exception, 500)`. Otherwise the status is
   left off the span, which still records the error.
-- Applications that load cfml-otel's jars through the same class loader share one SDK; the first one's
-  `service.name` wins, and the startup check reports `SDK_FALLBACK_SHARED`. Give each application its own
-  copy of `lib/`, or set `OTEL_SERVICE_NAME` per JVM.
+- Each `OTel` instance gets its own SDK, with its own `service.name`, even when applications share
+  cfml-otel's classes (Lucee 6 loads identical jars through one class loader, even from separate folders).
+  Call `shutdown()` before replacing an instance (an app reinit), or its exporter keeps running until the JVM
+  stops. The ColdBox module does this on unload. A JVM shutdown hook flushes whatever is still running.
+  `OTEL_SERVICE_NAME` applies to every app in the JVM; set the `serviceName` option per app instead.
 - The OTLP sender is cfml-otel's own (`HttpURLConnection`-based). The SDK's standard senders need
   `java.net.http`, which Adobe ColdFusion's bundled Java runtime doesn't include, or the OkHttp and Kotlin jars.
-- Tested on Lucee 7 and ACF 2025 (plain CFML and ColdBox). CI also runs Lucee 7 without the agent on ARM.
+- Tested on all four engines (plain CFML and ColdBox), and Lucee 7 on ARM.
 
 ### Startup checks
 
@@ -207,7 +210,6 @@ writeDump(application.otel.status());
 | `OTHER_IMPLEMENTATION` (info) | The agent is attached, but something else registered OpenTelemetry, so telemetry goes there. |
 | `BRIDGE_NOT_LOADED` | The jars in `lib/` aren't on the application's classpath. |
 | `SDK_FALLBACK_FAILED` | `sdkFallback` is on but the SDK didn't start: `lib/sdk/` isn't on the classpath, or the `OTEL_*` configuration is invalid. |
-| `SDK_FALLBACK_SHARED` (info) | Another application in the same class loader started the fallback SDK first, so its `service.name` is used. |
 
 The checks read JVM arguments, `JAVA_TOOL_OPTIONS` / `JDK_JAVA_OPTIONS`, system properties and `OTEL_*`
 environment variables. Settings made only in an agent configuration file aren't seen, so a
@@ -405,7 +407,8 @@ Tomcat's startup and connector logs, and cfml-otel's own `cfml-otel` warnings. T
 - `OTEL_INSTRUMENTATION_LOG4J_APPENDER_ENABLED=false` turns off `cflog` capture along with the engine logs,
   leaving only `otel.log*()`.
 - To keep `cflog` but drop specific engine loggers, filter in your Collector / Alloy, e.g. with the OTel
-  Collector `filter` processor:
+  Collector `filter` processor (tested with Collector 0.135 and 0.165: the two engine loggers are dropped,
+  everything else passes):
   ```yaml
   processors:
     filter/engine-logs:
@@ -415,7 +418,7 @@ Tomcat's startup and connector logs, and cfml-otel's own `cfml-otel` warnings. T
   ```
 
 **LogBox (ColdBox):** its file appenders write files directly, so the agent doesn't see them. LogBox's
-`CFAppender` logs through `cflog`, so its output should be captured too (not tested yet).
+`CFAppender` logs through `cflog`, so its output is captured, with the trace ID (tested on all four engines).
 
 ## Gotchas this library handles (and you should know about)
 
@@ -450,8 +453,10 @@ each other's `traceparent` header on outbound calls. Pick one tracing agent per 
 cfml-otel's calls are safe no-ops where the OTel agent isn't attached, so the same code runs everywhere.
 
 Some agents can also act as the OpenTelemetry API themselves (for example Datadog with
-`DD_TRACE_OTEL_ENABLED=true`). If so, `otel.status()` shows `active: true` and cfml-otel's spans should go
-to that agent, but this is untested. Only FusionReactor has been tested with cfml-otel so far:
+`DD_TRACE_OTEL_ENABLED=true`). cfml-otel then reports through them: tested with Datadog's Java agent 1.67.1 alone
+on Lucee 7, `otel.status()` showed `mode: "other"`, `active: true`, no warnings and `otherAgents: ["Datadog"]`,
+and Datadog's tracer recorded cfml-otel's spans (seen in its debug log; not checked in a Datadog backend).
+The other agents haven't been tried.
 
 ### FusionReactor
 
@@ -536,7 +541,8 @@ and Lucee 7 and 6 on GitHub's ARM runners. Pushing a `v*` tag that matches `box.
 ## Roadmap
 
 * A Hyper (ColdBox HTTP client) integration built on `httpSpan()`.
-* A LogBox appender with structured attributes (LogBox's `CFAppender` should already reach OTel through `cflog`).
+* A LogBox appender with structured attributes, and for the SDK fallback (LogBox's `CFAppender` already reaches OTel
+  through `cflog` when the agent is attached).
 * A PR for [LDEV-6519](https://luceeserver.atlassian.net/browse/LDEV-6519) (`ThreadContextPropagator` SPI)
   so Lucee `cfhttp` / `cfthread` propagate natively.
 * Lucee extension (`.lex`) packaging with OSGi manifests that resolve under Felix.

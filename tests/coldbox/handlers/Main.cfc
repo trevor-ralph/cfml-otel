@@ -15,6 +15,13 @@ component {
         event.renderData(type = "json", data = r);
     }
 
+    // Logs through LogBox (CFAppender -> cflog) with a unique marker, inside the request's trace
+    function logbox(event, rc, prc) {
+        var marker = "lb" & lCase(hash(createUUID()));
+        log.info("logbox #marker#");
+        event.renderData(type = "json", data = { "marker": marker, "traceId": otel.traceId() });
+    }
+
     // Leaks a scope, then throws: the interceptor's onException must close the leaked scope and record
     // the error on the SERVER span (postProcess doesn't run when the event throws)
     function fail(event, rc, prc) {

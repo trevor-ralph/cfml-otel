@@ -3,37 +3,33 @@ package cfmlotel.bridge;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.autoconfigure.AutoConfiguredOpenTelemetrySdk;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * cfml-otel's own OpenTelemetry SDK, for JVMs without the javaagent (opt-in: sdkFallback). Only this class
- * touches SDK types, and OtelBridge only loads it when the fallback is requested, so the SDK jars in
- * lib/sdk/ are needed only then.
+ * cfml-otel's own OpenTelemetry SDKs, for JVMs without the javaagent (opt-in: sdkFallback). Only this class
+ * touches SDK types, and OtelBridge only loads it when the fallback is used, so the SDK jars in lib/sdk/ are
+ * needed only then.
  *
- * <p>One SDK per class loader: applications that share cfml-otel's jars through one class loader share it
- * (the first one's service.name wins), and it is shut down when the last of them releases it.
+ * <p>One SDK per OTel CFC instance, never shared: applications that load these classes through one class
+ * loader (Lucee 6 does that even for separate copies of the same jars) still each get their own
+ * service.name. Instances that are never shut down are flushed by one JVM shutdown hook.
  */
 final class SdkFallback {
 
-  private static OpenTelemetrySdk sdk;
-  private static String serviceName = "";
-  private static int users;
+  private static final Set<OpenTelemetrySdk> LIVE = new LinkedHashSet<>();
+  private static boolean hookRegistered;
 
   private SdkFallback() {}
 
-  static synchronized Map<String, Object> start(Map<?, ?> defaults) {
+  static Map<String, Object> start(Map<?, ?> defaults, Map<?, ?> overrides) {
     Map<String, Object> r = new HashMap<>();
-    r.put("shared", false);
     r.put("error", "");
-    if (sdk != null) {
-      users++;
-      r.put("started", true);
-      r.put("shared", true);
-      r.put("serviceName", serviceName);
-      return r;
-    }
     Map<String, String> props = new HashMap<>();
     // The javaagent's defaults, so switching between agent and fallback needs no config change
     props.put("otel.exporter.otlp.protocol", "http/protobuf");
@@ -44,45 +40,67 @@ final class SdkFallback {
         }
       }
     }
+    Map<String, String> forced = new HashMap<>();
+    if (overrides != null) {
+      for (Map.Entry<?, ?> e : overrides.entrySet()) {
+        if (e.getKey() != null && e.getValue() != null && !String.valueOf(e.getValue()).isEmpty()) {
+          forced.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
+        }
+      }
+    }
+    OpenTelemetrySdk sdk;
     try {
-      // Defaults only: OTEL_* environment variables and otel.* system properties still take precedence
-      AutoConfiguredOpenTelemetrySdk auto = AutoConfiguredOpenTelemetrySdk.builder()
+      // defaults: below OTEL_* env vars and otel.* system properties; overrides (explicit CFC options): above them.
+      // Not registered as GlobalOpenTelemetry (one per class loader); the CFC holds the handle instead.
+      sdk = AutoConfiguredOpenTelemetrySdk.builder()
           .addPropertiesSupplier(() -> props)
-          .build();
-      sdk = auto.getOpenTelemetrySdk();
+          .addPropertiesCustomizer(config -> forced)
+          .disableShutdownHook()
+          .build()
+          .getOpenTelemetrySdk();
     } catch (RuntimeException e) {
       r.put("started", false);
       r.put("serviceName", "");
       r.put("error", "the OpenTelemetry SDK could not be configured: " + e);
       return r;
     }
-    users = 1;
+    register(sdk);
     String configured = Diagnostics.config("otel.service.name");
-    serviceName = !configured.isEmpty() ? configured : props.getOrDefault("otel.service.name", "");
-    OtelBridge.setFallback(sdk);
+    String name = forced.containsKey("otel.service.name") ? forced.get("otel.service.name")
+        : !configured.isEmpty() ? configured : props.getOrDefault("otel.service.name", "");
     r.put("started", true);
-    r.put("serviceName", serviceName);
+    r.put("serviceName", name);
+    r.put("sdk", sdk);
     return r;
   }
 
-  static synchronized void flush() {
-    if (sdk == null) return;
-    sdk.getSdkTracerProvider().forceFlush().join(10, TimeUnit.SECONDS);
-    sdk.getSdkMeterProvider().forceFlush().join(10, TimeUnit.SECONDS);
-    sdk.getSdkLoggerProvider().forceFlush().join(10, TimeUnit.SECONDS);
+  private static synchronized void register(OpenTelemetrySdk sdk) {
+    LIVE.add(sdk);
+    if (!hookRegistered) {
+      hookRegistered = true;
+      Runtime.getRuntime().addShutdownHook(new Thread(SdkFallback::shutdownAll, "cfml-otel-sdk-shutdown"));
+    }
   }
 
-  static synchronized void release() {
-    if (sdk == null) return;
-    if (--users > 0) {
-      flush();
-      return;
+  static void shutdown(Object handle) {
+    OpenTelemetrySdk sdk;
+    synchronized (SdkFallback.class) {
+      if (!(handle instanceof OpenTelemetrySdk) || !LIVE.remove(handle)) return;
+      sdk = (OpenTelemetrySdk) handle;
     }
-    OpenTelemetrySdk s = sdk;
-    OtelBridge.setFallback(null);
-    sdk = null;
-    serviceName = "";
-    users = 0;
-    s.shutdown().join(10, TimeUnit.SECONDS);
+    sdk.shutdown().join(10, TimeUnit.SECONDS);
+  }
+
+  static synchronized int liveCount() {
+    return LIVE.size();
+  }
+
+  private static void shutdownAll() {
+    List<OpenTelemetrySdk> all;
+    synchronized (SdkFallback.class) {
+      all = new ArrayList<>(LIVE);
+      LIVE.clear();
+    }
+    for (OpenTelemetrySdk sdk : all) sdk.shutdown().join(10, TimeUnit.SECONDS);
   }
 }

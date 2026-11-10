@@ -31,7 +31,7 @@ component {
             // No javaagent attached and nothing else registered: start cfml-otel's own SDK (needs lib/sdk/ in
             // loadPaths). Configured by the standard OTEL_* env vars; you must call onRequestStart()/onRequestEnd().
             "sdkFallback": false,
-            "serviceName": "",        // fallback only: service.name when OTEL_SERVICE_NAME isn't set (default: app name)
+            "serviceName": "",        // fallback only: this app's service.name; wins over OTEL_SERVICE_NAME (default: app name)
             "bridgeClass": "cfmlotel.bridge.OtelBridge"
         };
         structAppend(cfg, arguments.config, true);
@@ -63,23 +63,30 @@ component {
         }
         try {
             st.bridge = createObject("java", cfg.bridgeClass);
+            // The OpenTelemetry this instance reports through: the global one (the agent's, or a no-op), or with
+            // sdkFallback an SDK of its own, never shared with another application
+            st.otel = st.bridge.openTelemetry();
             if (cfg.sdkFallback) {
-                if (st.bridge.isSdkFallback() || (!st.bridge.isActive() && !st.bridge.isAgentAttached())) {
-                    st.sdk = this._toCfml(st.bridge.startSdkFallback({ "otel.service.name": this._defaultServiceName() }));
+                if (!st.bridge.isActive() && !st.bridge.isAgentAttached()) {
+                    var started = st.bridge.startSdkFallback({ "otel.service.name": this._defaultServiceName() },
+                        len(cfg.serviceName) ? { "otel.service.name": cfg.serviceName } : {});
+                    if (started.get("started")) st.otel = started.get("sdk");
+                    st.sdk = { "started": started.get("started"), "serviceName": started.get("serviceName"), "error": started.get("error") };
                 } else {
-                    st.sdk = { "started": false, "shared": false, "serviceName": "", "error": "", "notNeeded": true };
+                    st.sdk = { "started": false, "serviceName": "", "error": "", "notNeeded": true };
                 }
             }
+            var isSdk = structKeyExists(st.sdk, "started") && st.sdk.started;
             var meterName = len(cfg.meterName) ? cfg.meterName : cfg.tracerName;
             var loggerName = len(cfg.loggerName) ? cfg.loggerName : cfg.tracerName;
-            st.tracer = st.bridge.tracer(cfg.tracerName, cfg.tracerVersion);
-            st.meter = st.bridge.meter(meterName, cfg.tracerVersion);
-            st.logger = st.bridge.logger(loggerName);
+            st.tracer = st.bridge.tracer(st.otel, cfg.tracerName, cfg.tracerVersion);
+            st.meter = st.bridge.meter(st.otel, meterName, cfg.tracerVersion);
+            st.logger = st.bridge.logger(st.otel, loggerName);
             st.bridgeVersion = st.bridge.version();
             st.agentBridged = st.bridge.isAgentBridged();
-            st.active = st.bridge.isActive();
+            st.active = st.bridge.isActiveFor(st.otel);
             st.enabled = true;
-            st.mode = st.bridge.isSdkFallback() ? "sdk" : (st.agentBridged ? "agent" : (st.active ? "other" : "noop"));
+            st.mode = isSdk ? "sdk" : (st.agentBridged ? "agent" : (st.active ? "other" : "noop"));
             if (!st.active) st.reason = "OpenTelemetry API loaded but no SDK/agent is active (no-op)";
         } catch (any e) {
             st.reason = "could not load #cfg.bridgeClass# (are cfml-otel/lib jars in this.javaSettings.loadPaths?): " & e.message;
@@ -91,32 +98,25 @@ component {
                 var isLucee = structKeyExists(server, "lucee");
                 if (cfg.cfhttpSpans == "always") st.httpMode = "span";
                 else if (cfg.cfhttpSpans == "never") st.httpMode = "agent";
-                else st.httpMode = (!isLucee && st.bridge.agentTracesHttpClient()) ? "agent" : "span";
+                else st.httpMode = (!isLucee && st.mode == "agent" && st.bridge.agentTracesHttpClient()) ? "agent" : "span";
             } catch (any e) {
                 st.httpMode = "span";
             }
             try {
-                st.diagnostics = this._toCfml(st.bridge.diagnostics(structKeyExists(server, "lucee") ? "lucee" : "acf"));
+                st.diagnostics = this._toCfml(st.bridge.diagnostics(structKeyExists(server, "lucee") ? "lucee" : "acf",
+                    st.otel, st.mode == "sdk"));
                 if (!st.active && arrayLen(st.diagnostics.warnings)) st.reason = st.diagnostics.warnings[1].message;
             } catch (any e) {
                 st.diagnostics = { "warnings": [{ "level": "warn", "code": "DIAGNOSTICS_FAILED",
                     "message": "cfml-otel's startup check failed: " & e.message }] };
             }
-            if (structKeyExists(st.sdk, "started")) {
-                var fallbackWarning = {};
-                if (!st.sdk.started && len(st.sdk.error)) {
-                    fallbackWarning = { "level": "warn", "code": "SDK_FALLBACK_FAILED",
-                        "message": "sdkFallback is on, but cfml-otel's SDK didn't start, so cfml-otel is a no-op: " & st.sdk.error };
-                    st.reason = fallbackWarning.message;
-                } else if (st.sdk.shared && st.sdk.serviceName != this._defaultServiceName()) {
-                    fallbackWarning = { "level": "info", "code": "SDK_FALLBACK_SHARED",
-                        "message": "Another application sharing cfml-otel's jars (one class loader) already started the fallback SDK, so telemetry from this one is reported as service.name ""#st.sdk.serviceName#"". Give each application its own copy of lib/ and lib/sdk/, or set OTEL_SERVICE_NAME per JVM." };
-                }
-                if (!structIsEmpty(fallbackWarning)) {
-                    // the no-agent warning is moot once the fallback was requested; this one says what happened
-                    st.diagnostics.warnings = st.diagnostics.warnings.filter(function(w) { return w.code != "NO_OTEL_AGENT"; });
-                    arrayPrepend(st.diagnostics.warnings, fallbackWarning);
-                }
+            if (structKeyExists(st.sdk, "started") && !st.sdk.started && len(st.sdk.error)) {
+                // the no-agent warning is moot once the fallback was requested; this one says what happened
+                var failed = { "level": "warn", "code": "SDK_FALLBACK_FAILED",
+                    "message": "sdkFallback is on, but cfml-otel's SDK didn't start, so cfml-otel is a no-op: " & st.sdk.error };
+                st.reason = failed.message;
+                st.diagnostics.warnings = st.diagnostics.warnings.filter(function(w) { return w.code != "NO_OTEL_AGENT"; });
+                arrayPrepend(st.diagnostics.warnings, failed);
             }
         }
         if (cfg.logDiagnostics) {
@@ -176,7 +176,7 @@ component {
         s["enabled"] = st.enabled;
         s["active"] = st.active;
         s["agentBridged"] = st.agentBridged;
-        s["implementation"] = st.enabled ? st.bridge.implementationClass() : "";
+        s["implementation"] = st.enabled ? st.bridge.implementationOf(st.otel) : "";
         s["reason"] = st.reason;
         s["bridgeVersion"] = st.bridgeVersion;
         for (var k in ["apiVersion", "agentPresent", "agentVersion", "agentPath", "testedAgentVersion", "otherAgents", "jvmAgents"]) {
@@ -186,6 +186,8 @@ component {
         s["httpMode"] = st.httpMode;
         s["mode"] = st.mode;
         s["sdkFallback"] = duplicate(st.sdk);
+        // fallback SDKs running in this class loader (one per OTel instance that started one and wasn't shut down)
+        if (structKeyExists(st.sdk, "started") && st.enabled) s.sdkFallback["runningInClassLoader"] = st.bridge.sdkFallbackCount();
         return s;
     }
 
@@ -224,7 +226,7 @@ component {
             if (!isNull(ua)) attrs["user_agent.original"] = ua;
             attrs["network.protocol.version"] = listLast(req.getProtocol(), "/");
             var s = this.startSpan(method & " " & route, {
-                "kind": "server", "attributes": attrs, "parent": st.bridge.extractContext(carrier) });
+                "kind": "server", "attributes": attrs, "parent": st.bridge.extractContext(st.otel, carrier) });
             request.__cfmlotelServer = { "span": s, "token": s.makeCurrent(), "thread": st.jThread.currentThread().getId() };
         } catch (any e) {
             // tracing must never break the request
@@ -264,7 +266,7 @@ component {
         var st = this.__state;
         if (!st.enabled || st.mode != "sdk") return;
         try {
-            st.bridge.shutdownSdkFallback();
+            st.bridge.shutdownSdkFallback(st.otel);
         } catch (any ignored) {}
         st.mode = "noop";
         st.active = false;
@@ -392,7 +394,7 @@ component {
     public struct function injectHeaders(struct headers = {}) {
         var st = this.__state;
         if (!st.enabled) return arguments.headers;
-        var injected = st.bridge.injectHeaders(this.captureContext());
+        var injected = st.bridge.injectHeaders(st.otel, this.captureContext());
         var keys = injected.keySet().toArray();
         for (var k in keys) {
             arguments.headers[k] = injected.get(k);
@@ -411,7 +413,7 @@ component {
         var st = this.__state;
         if (!st.enabled) return "";
         if (isNull(arguments.headers)) arguments.headers = getHttpRequestData().headers;
-        return st.bridge.extractContext(arguments.headers);
+        return st.bridge.extractContext(st.otel, arguments.headers);
     }
 
     // ------------------------------------------------------------------------------------------

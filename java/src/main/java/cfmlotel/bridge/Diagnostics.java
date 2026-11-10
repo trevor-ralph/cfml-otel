@@ -49,14 +49,14 @@ final class Diagnostics {
   // Gathering
   // ------------------------------------------------------------------------------------------
 
-  static Facts gather(String engine) {
+  static Facts gather(String engine, io.opentelemetry.api.OpenTelemetry otel, boolean sdkFallback) {
     Facts f = new Facts();
     f.engine = engine == null ? "" : engine.trim().toLowerCase(Locale.ROOT);
     f.apiVersion = apiVersion();
-    f.implementation = OtelBridge.implementationClass();
+    f.implementation = otel.getClass().getName();
     f.agentBridged = OtelBridge.isAgentBridged();
-    f.active = OtelBridge.isActive();
-    f.sdkFallback = OtelBridge.isSdkFallback();
+    f.active = OtelBridge.isActiveFor(otel);
+    f.sdkFallback = sdkFallback;
     f.config = Diagnostics::config;
 
     Set<String> args = new LinkedHashSet<>();

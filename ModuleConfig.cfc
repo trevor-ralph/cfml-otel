@@ -53,4 +53,17 @@ component {
             .initArg(name = "config", dsl = "coldbox:moduleSettings:cfml-otel")
             .asSingleton();
     }
+
+    /**
+     * On reinit and application end: flush, and in sdkFallback mode shut the SDK down, so a reinit starts a
+     * fresh one instead of leaking the old exporters. Only if OTel was built: never construct it just to stop it.
+     */
+    function onUnload() {
+        try {
+            var mapping = wirebox.getBinder().getMapping("OTel@cfmlotel");
+            if (wirebox.getScope("singleton").exists(mapping)) {
+                wirebox.getInstance("OTel@cfmlotel").shutdown();
+            }
+        } catch (any ignored) {}
+    }
 }

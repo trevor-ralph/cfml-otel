@@ -1,7 +1,7 @@
 # Dev / integration stack. The host only needs Docker; run everything from this directory:
 #
 #   docker compose run --rm build                      # lib/ (bridge + OTel API jars), the javaagent, ColdBox
-#   docker compose up -d lgtm lucee7 lucee6 acf2025 acf2023     # + lucee7-sdk acf2025-sdk (no javaagent), acf2025-nohttp
+#   docker compose up -d lgtm lucee7 lucee6 acf2025 acf2023     # + lucee7-sdk acf2025-sdk lucee6-sdk acf2023-sdk (no javaagent), acf2025-nohttp
 #   docker compose run --rm tests                      # pytest; ENGINES=lucee7,acf2023 to pick engines
 #
 # The repo is mounted read-only under each engine's web root at /cfml-otel. Tests live in tests/app (plain
@@ -130,6 +130,27 @@ services:
       CFMLOTEL_SDK_FALLBACK: "true"
     volumes: ["..:/app/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
+  lucee6-sdk:
+    image: lucee/lucee:6.2.9.4
+    depends_on: [lgtm]
+    ports: ["8962:8888"]
+    environment:
+      <<: *otlp-env
+      OTEL_SERVICE_NAME: "cfml-otel-lucee6-sdk"
+      CFMLOTEL_SDK_FALLBACK: "true"
+    volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+
+  acf2023-sdk:
+    image: adobecoldfusion/coldfusion2023:2023.0.26
+    depends_on: [lgtm]
+    ports: ["8942:8500"]
+    environment:
+      <<: [*otlp-env, *acf-env]
+      OTEL_SERVICE_NAME: "cfml-otel-acf2023-sdk"
+      CFMLOTEL_SDK_FALLBACK: "true"
+      JAVA_TOOL_OPTIONS: "-XX:-UseContainerSupport"   # same JDK 17 cgroup v2 NPE as acf2023 (see there)
+    volumes: ["..:/app/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+
   # ---- tools: started only by `docker compose run --rm <name>` -------------------------------------
   build:
     profiles: ["tools"]
@@ -142,7 +163,7 @@ services:
     profiles: ["tools"]
     build: ../tests/integration
     environment:
-      ENGINES: "${ENGINES:-lucee7,lucee6,acf2025,acf2023}"   # also: lucee7-sdk, acf2025-sdk, acf2025-nohttp
+      ENGINES: "${ENGINES:-lucee7,lucee6,acf2025,acf2023}"   # also: lucee7-sdk, lucee6-sdk, acf2025-sdk, acf2023-sdk, acf2025-nohttp
       MSSQL: "${MSSQL:-1}"         # 0 skips the SQL Server checks (ARM, or no mssql service)
       GRAFANA_URL: "http://lgtm:3000"
     volumes: ["../tests/results:/results"]

@@ -75,10 +75,11 @@ public final class OtelBridge {
 
   /**
    * Startup self-check for CFML: versions, attached agents, and warnings (each {level, code, message})
-   * explaining why nothing would be recorded or what is misconfigured. engine: "lucee" or "acf".
+   * explaining why nothing would be recorded or what is misconfigured. engine: "lucee" or "acf"; otel: the
+   * instance's handle; sdkFallback: whether that handle is an SDK cfml-otel started.
    */
-  public static Map<String, Object> diagnostics(String engine) {
-    return Diagnostics.report(Diagnostics.gather(engine));
+  public static Map<String, Object> diagnostics(String engine, Object otel, boolean sdkFallback) {
+    return Diagnostics.report(Diagnostics.gather(engine, otel(otel), sdkFallback));
   }
 
   // ------------------------------------------------------------------------------------------
@@ -112,72 +113,86 @@ public final class OtelBridge {
     return SCOPE_SEQ.incrementAndGet();
   }
 
-  /**
-   * The SDK cfml-otel started itself (sdkFallback), typed as the API interface so this class never needs the
-   * SDK jars on the classpath. Null unless the fallback is running.
-   */
-  private static volatile OpenTelemetry fallback;
+  // ------------------------------------------------------------------------------------------
+  // Implementations. Each OTel CFC instance holds one OpenTelemetry handle: GlobalOpenTelemetry (the agent's,
+  // or a no-op) or, with sdkFallback, an SDK of its own. Everything that needs one takes it as the first
+  // argument, so applications that share these classes (one class loader) never share an SDK.
+  // ------------------------------------------------------------------------------------------
 
-  /** What every call goes through: the fallback SDK when it runs, else GlobalOpenTelemetry (the agent's). */
-  static OpenTelemetry otel() {
-    OpenTelemetry f = fallback;
-    return f != null ? f : GlobalOpenTelemetry.get();
+  static OpenTelemetry global() {
+    return GlobalOpenTelemetry.get();
   }
 
-  static void setFallback(OpenTelemetry sdk) {
-    fallback = sdk;
+  private static OpenTelemetry otel(Object handle) {
+    return handle instanceof OpenTelemetry ? (OpenTelemetry) handle : global();
   }
 
+  /** GlobalOpenTelemetry: the agent's bridged instance, a registered SDK, or a no-op. */
   public static Object openTelemetry() {
-    return otel();
+    return global();
   }
 
-  /** True while cfml-otel's own SDK (sdkFallback) is the implementation. */
-  public static boolean isSdkFallback() {
-    return fallback != null;
-  }
-
-  /** Class name of the active OpenTelemetry implementation (diagnostics). */
+  /** Class name of GlobalOpenTelemetry's implementation (diagnostics). */
   public static String implementationClass() {
-    return otel().getClass().getName();
+    return global().getClass().getName();
+  }
+
+  /** Class name of the given handle's implementation. */
+  public static String implementationOf(Object otel) {
+    return otel(otel).getClass().getName();
   }
 
   /** True when GlobalOpenTelemetry is the javaagent's bridge into its SDK. */
   public static boolean isAgentBridged() {
-    return GlobalOpenTelemetry.get().getClass().getName().startsWith("io.opentelemetry.javaagent.");
+    return global().getClass().getName().startsWith("io.opentelemetry.javaagent.");
   }
 
   /** True when the OTel javaagent is attached to this JVM (bridged or not). */
   public static boolean isAgentAttached() {
-    return Diagnostics.gather("").otelAgentPresent;
+    return Diagnostics.gather("", global(), false).otelAgentPresent;
+  }
+
+  /** True when spans created through GlobalOpenTelemetry would be recorded/propagated. */
+  public static boolean isActive() {
+    return isActiveFor(global());
+  }
+
+  /** True when spans created through the given handle would actually be recorded/propagated. */
+  public static boolean isActiveFor(Object otel) {
+    Span probe = otel(otel).getTracer("cfml-otel.probe").spanBuilder("probe").startSpan();
+    // Never end the probe span: an un-ended span is not exported.
+    return probe.getSpanContext().isValid();
   }
 
   /**
-   * Start cfml-otel's own SDK (opt-in sdkFallback). Configured from the standard OTEL_* environment
-   * variables / otel.* system properties; {@code defaults} only fills in what those leave unset.
-   * Needs the jars in lib/sdk/. Returns {started, shared, serviceName, error}.
+   * Start an SDK of cfml-otel's own (opt-in sdkFallback), for one OTel instance. Configured from the standard
+   * OTEL_* environment variables / otel.* system properties; {@code defaults} only fills in what those leave
+   * unset; {@code overrides} (explicit CFC options) win over them. Needs the jars in lib/sdk/. Returns {started, serviceName, error, sdk (the handle, when started)}.
    */
-  public static Map<String, Object> startSdkFallback(Map<?, ?> defaults) {
+  public static Map<String, Object> startSdkFallback(Map<?, ?> defaults, Map<?, ?> overrides) {
     try {
-      return SdkFallback.start(defaults);
+      return SdkFallback.start(defaults, overrides);
     } catch (LinkageError e) {
       Map<String, Object> r = new HashMap<>();
       r.put("started", false);
-      r.put("shared", false);
       r.put("serviceName", "");
       r.put("error", "the SDK jars are not on the classpath (add cfml-otel/lib/sdk/ to this.javaSettings.loadPaths): " + e);
       return r;
     }
   }
 
-  /** Flush the fallback SDK; shut it down once no application that started or reused it is left. */
-  public static void shutdownSdkFallback() {
-    if (fallback != null) SdkFallback.release();
+  /** Flush and shut down an SDK from startSdkFallback() (anything else is ignored). */
+  public static void shutdownSdkFallback(Object sdk) {
+    if (sdk instanceof OpenTelemetry && !(sdk == global())) SdkFallback.shutdown(sdk);
   }
 
-  /** Flush the fallback SDK's pending spans, metrics and logs (no-op otherwise). */
-  public static void flushSdkFallback() {
-    if (fallback != null) SdkFallback.flush();
+  /** How many fallback SDKs are running in this class loader (tests and diagnostics). */
+  public static int sdkFallbackCount() {
+    try {
+      return SdkFallback.liveCount();
+    } catch (LinkageError e) {
+      return 0;
+    }
   }
 
   /**
@@ -202,21 +217,13 @@ public final class OtelBridge {
     return 0;
   }
 
-  /** True when spans created through the API would actually be recorded/propagated. */
-  public static boolean isActive() {
-    Span probe = otel().getTracer("cfml-otel.probe").spanBuilder("probe").startSpan();
-    boolean valid = probe.getSpanContext().isValid();
-    // Never end the probe span: an un-ended span is not exported.
-    return valid;
-  }
-
   // ------------------------------------------------------------------------------------------
   // Tracing
   // ------------------------------------------------------------------------------------------
 
-  public static Object tracer(String name, String version) {
-    OpenTelemetry otel = otel();
-    return isBlank(version) ? otel.getTracer(name) : otel.getTracer(name, version);
+  public static Object tracer(Object otel, String name, String version) {
+    OpenTelemetry o = otel(otel);
+    return isBlank(version) ? o.getTracer(name) : o.getTracer(name, version);
   }
 
   /**
@@ -391,16 +398,16 @@ public final class OtelBridge {
   };
 
   /** Headers to send downstream for the given context (or current context if not a Context). */
-  public static Map<String, String> injectHeaders(Object context) {
+  public static Map<String, String> injectHeaders(Object otel, Object context) {
     Context ctx = context instanceof Context ? (Context) context : Context.current();
     Map<String, String> headers = new HashMap<>();
-    otel().getPropagators().getTextMapPropagator().inject(ctx, headers, MAP_SETTER);
+    otel(otel).getPropagators().getTextMapPropagator().inject(ctx, headers, MAP_SETTER);
     return headers;
   }
 
   /** Extract a remote parent context from inbound headers (case-insensitive keys). */
-  public static Object extractContext(Map<?, ?> headers) {
-    return otel().getPropagators().getTextMapPropagator()
+  public static Object extractContext(Object otel, Map<?, ?> headers) {
+    return otel(otel).getPropagators().getTextMapPropagator()
         .extract(Context.current(), headers, MAP_GETTER);
   }
 
@@ -408,11 +415,11 @@ public final class OtelBridge {
   // Metrics
   // ------------------------------------------------------------------------------------------
 
-  public static Object meter(String name, String version) {
-    OpenTelemetry otel = otel();
+  public static Object meter(Object otel, String name, String version) {
+    OpenTelemetry o = otel(otel);
     return isBlank(version)
-        ? otel.getMeter(name)
-        : otel.meterBuilder(name).setInstrumentationVersion(version).build();
+        ? o.getMeter(name)
+        : o.meterBuilder(name).setInstrumentationVersion(version).build();
   }
 
   /**
@@ -465,8 +472,8 @@ public final class OtelBridge {
   // Logs
   // ------------------------------------------------------------------------------------------
 
-  public static Object logger(String name) {
-    return otel().getLogsBridge().get(name);
+  public static Object logger(Object otel, String name) {
+    return otel(otel).getLogsBridge().get(name);
   }
 
   /** Emit a log record correlated with the current span. severity: TRACE|DEBUG|INFO|WARN|ERROR|FATAL. */

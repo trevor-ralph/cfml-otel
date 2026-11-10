@@ -57,7 +57,9 @@ TARGETS = {
     "acf2025": Target("acf2025", "acf2025", 8500, 8951, "cfml-otel-acf2025"),
     "acf2023": Target("acf2023", "acf2023", 8500, 8941, "cfml-otel-acf2023"),
     "lucee7-sdk": Target("lucee7-sdk", "lucee7-sdk", 8888, 8972, "cfml-otel-lucee7-sdk", sdk=True),
+    "lucee6-sdk": Target("lucee6-sdk", "lucee6-sdk", 8888, 8962, "cfml-otel-lucee6-sdk", sdk=True),
     "acf2025-sdk": Target("acf2025-sdk", "acf2025-sdk", 8500, 8952, "cfml-otel-acf2025-sdk", sdk=True),
+    "acf2023-sdk": Target("acf2023-sdk", "acf2023-sdk", 8500, 8942, "cfml-otel-acf2023-sdk", sdk=True),
     "acf2025-nohttp": Target("acf2025-nohttp", "acf2025-nohttp", 8500, 8953, "cfml-otel-acf2025-nohttp", agent_http=False),
 }
 
@@ -273,12 +275,17 @@ def drive(t: Target) -> Run:
         cb["index"] = get_json(f"{cb_base}?event=main.index", traceparent(cb["T"], cb["P"]))
         cb["FT"], cb["FP"] = hex_id(16), hex_id(8)
         cb["fail_status"] = http(f"{cb_base}?event=main.fail", traceparent(cb["FT"], cb["FP"]))[0]
+        cb["LT"] = hex_id(16)
+        cb["logbox"] = get_json(f"{cb_base}?event=main.logbox", traceparent(cb["LT"], hex_id(8)))
         cb["leak"] = get_json(f"{cb_base}?event=main.leak")
         cb["bad"] = 0
         for _ in range(30):
             ct = hex_id(16)
             if get_json(f"{cb_base}?event=main.check", traceparent(ct, hex_id(8))).get("traceId") != ct:
                 cb["bad"] += 1
+        # Reinit again: the module's onUnload() must shut the fallback SDK down, so this load starts a fresh one
+        http(f"{cb_base}?fwreinit=1", timeout=180)
+        cb["afterReinit"] = get_json(f"{cb_base}?event=main.index")
     except Exception as e:  # reported by the ColdBox tests, not a crash of the whole run
         cb["error"] = f"{type(e).__name__}: {e}"
 

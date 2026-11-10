@@ -50,3 +50,34 @@ def test_onexception_records_the_error_on_the_server_span(cb):
 
 def test_scopes_leaked_by_events_are_closed(cb):
     assert cb["bad"] == 0, f"{cb['bad']} of 30 pooled requests inherited a stale trace"
+
+
+def test_reinit_shuts_the_fallback_sdk_down(run, cb):
+    before, after = cb["index"]["status"], cb["afterReinit"]["status"]
+    if not run.target.sdk:
+        assert after["mode"] == "agent", after
+        pytest.skip("agent engine: no SDK of cfml-otel's own to shut down")
+    # The module's onUnload() shut the old SDK down, so a reinit replaces it instead of adding one. (Counted per
+    # class loader: on Lucee 6 the plain test app's SDK shares it, so the count isn't simply 1.)
+    assert after["mode"] == "sdk" and after["sdkFallback"]["started"], after["sdkFallback"]
+    assert after["sdkFallback"]["runningInClassLoader"] == before["sdkFallback"]["runningInClassLoader"], (before["sdkFallback"], after["sdkFallback"])
+
+
+def test_fallback_sdk_is_per_application(run, cb):
+    if not run.target.sdk:
+        pytest.skip("agent engine: the agent's SDK is shared by design")
+    # The ColdBox app's serviceName option beats OTEL_SERVICE_NAME, and its SDK is its own even where both test
+    # apps load cfml-otel through one class loader (Lucee 6): the plain app keeps the env var's name.
+    assert cb["index"]["status"]["sdkFallback"]["serviceName"] == f"{run.target.service}-coldbox", cb["index"]["status"]
+    assert run.response["status"]["sdkFallback"]["serviceName"] == run.target.service, run.response["status"]
+
+
+def test_logbox_cfappender_reaches_loki_with_the_trace(run, cb):
+    """LogBox's CFAppender writes through cflog, which the agent captures (log4j2)."""
+    if run.target.sdk:
+        pytest.xfail("cflog capture is the agent's; without it LogBox needs an OTel appender")
+    lb = cb["logbox"]
+    assert lb["traceId"] == cb["LT"], lb
+    streams = harness.loki_streams(f'{{service_name="{run.target.service}"}} |= "{lb["marker"]}"', run.started)
+    assert streams, f"no Loki line with {lb['marker']}"
+    assert any(s["stream"].get("trace_id") == cb["LT"] for s in streams), [s["stream"] for s in streams]
