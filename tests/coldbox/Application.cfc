@@ -1,7 +1,7 @@
 /**
  * ColdBox integration test app. dev/docker-compose.yml mounts ColdBox at /opt/coldbox and this repo as an
  * installed module at /opt/cbmodules/cfml-otel, the way `box install cfml-otel` would put it in modules/.
- * Driven by tests/run-integration.ps1.
+ * Driven by the pytest runner in tests/integration.
  */
 component {
 

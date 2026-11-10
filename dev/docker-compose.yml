@@ -1,8 +1,14 @@
-# Dev/integration stack: the repo is mounted read-only at /cfml-otel under each engine web root; tests live in
-# /cfml-otel/tests/app (plain CFML) and /cfml-otel/tests/coldbox (ColdBox: ColdBox itself at /opt/coldbox, this repo
-# as an installed module at /opt/cbmodules/cfml-otel). The H2 JDBC driver for the cfquery scenario is mounted into each
-# engine's server lib folder.
-# ../build.sh and fetch-test-deps.sh first, then `docker compose up -d`, then ../tests/run-integration.ps1
+# Dev / integration stack. The host only needs Docker; run everything from this directory:
+#
+#   docker compose run --rm build                      # lib/ (bridge + OTel API jars), the javaagent, ColdBox
+#   docker compose up -d lgtm lucee7 lucee6 acf2025 acf2023
+#   docker compose run --rm tests                      # pytest; ENGINES=lucee7,acf2023 to pick engines
+#
+# The repo is mounted read-only under each engine's web root at /cfml-otel. Tests live in tests/app (plain
+# CFML), tests/coldbox (ColdBox: ColdBox itself at /opt/coldbox, this repo as an installed module at
+# /opt/cbmodules/cfml-otel) and tests/integration (the pytest runner). Grafana: http://localhost:3000.
+#
+# x86-64 only: the ACF and SQL Server images. On ARM, run the Lucee engines with MSSQL=0 and --no-deps.
 name: cfml-otel-dev
 
 x-otel-env: &otel-env
@@ -13,58 +19,97 @@ x-otel-env: &otel-env
   OTEL_BLRP_SCHEDULE_DELAY: "500"
   OTEL_METRIC_EXPORT_INTERVAL: "5000"
 
+# Throwaway credentials for the local/CI SQL Server container, read by tests/app/Application.cfc
+x-mssql-env: &mssql-env
+  MSSQL_HOST: "mssql"
+  MSSQL_PASSWORD: "CfmlOtel-dev-0nly!"
+
+x-acf-env: &acf-env
+  acceptEULA: "YES"              # accepted by the user for local development (dev/trial edition)
+  password: "dev-admin-only"     # local throwaway CF admin password
+  enableSecureProfile: "false"
+  installModules: "sqlserver"    # ACF's built-in SQL Server driver (cfpm package, installed at startup)
+
 services:
   lgtm:
     image: grafana/otel-lgtm:0.40.0
     ports: ["3000:3000", "4317:4317", "4318:4318"]
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    environment:
+      ACCEPT_EULA: "Y"             # Microsoft SQL Server EULA, Developer edition (free for dev/test, not production)
+      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: "CfmlOtel-dev-0nly!"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q 'SELECT 1' -o /dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+      start_period: 20s
 
   lucee7:
     image: lucee/lucee:7.0.6.10
     depends_on: [lgtm]
     ports: ["8971:8888"]
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *mssql-env]
       OTEL_SERVICE_NAME: "cfml-otel-lucee7"
       # Lucee runs cfhttp on a worker thread, so the agent's HttpClient spans start orphan traces and
       # overwrite the traceparent cfml-otel injects (LDEV-6519). Lucee 6 is left at the default as a control.
       OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED: "false"
-    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
-              "./jdbc/h2.jar:/usr/local/tomcat/lib/h2.jar:ro"]
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   lucee6:
     image: lucee/lucee:6.2.9.4
     depends_on: [lgtm]
     ports: ["8961:8888"]
-    environment: { <<: *otel-env, OTEL_SERVICE_NAME: "cfml-otel-lucee6" }
-    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
-              "./jdbc/h2.jar:/usr/local/tomcat/lib/h2.jar:ro"]
+    environment:
+      <<: [*otel-env, *mssql-env]
+      OTEL_SERVICE_NAME: "cfml-otel-lucee6"
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   acf2025:
     image: adobecoldfusion/coldfusion2025:2025.0.14
     depends_on: [lgtm]
     ports: ["8951:8500"]
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *mssql-env, *acf-env]
       OTEL_SERVICE_NAME: "cfml-otel-acf2025"
-      acceptEULA: "YES"            # accepted by the user for local development (dev/trial edition)
-      password: "dev-admin-only"   # local throwaway CF admin password
-      enableSecureProfile: "false"
-    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
-              "./jdbc/h2.jar:/opt/coldfusion/cfusion/lib/h2.jar:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   acf2023:
     image: adobecoldfusion/coldfusion2023:2023.0.26
     depends_on: [lgtm]
     ports: ["8941:8500"]
     environment:
-      <<: *otel-env
+      <<: [*otel-env, *mssql-env, *acf-env]
       # ACF 2023's bundled JDK 17 throws an NPE in CgroupV2Subsystem on some cgroup v2 hosts (e.g. GitHub's
       # ubuntu runners) as soon as the agent reads CPU metrics, so neither the agent nor ColdFusion starts.
       # Turning off JVM container detection avoids that code path. ACF sets -Xmx explicitly, so nothing is lost.
       JAVA_TOOL_OPTIONS: "-javaagent:/otel/opentelemetry-javaagent.jar -XX:-UseContainerSupport"
       OTEL_SERVICE_NAME: "cfml-otel-acf2023"
-      acceptEULA: "YES"            # accepted by the user for local development (dev/trial edition)
-      password: "dev-admin-only"   # local throwaway CF admin password
-      enableSecureProfile: "false"
-    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
-              "./jdbc/h2.jar:/opt/coldfusion/cfusion/lib/h2.jar:ro"]
+    volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+
+  # ---- tools: started only by `docker compose run --rm <name>` -------------------------------------
+  build:
+    profiles: ["tools"]
+    image: maven:3.9.15-eclipse-temurin-21
+    working_dir: /src
+    entrypoint: ["bash", "-c", "./build.sh && bash dev/fetch-test-deps.sh"]
+    volumes: ["..:/src", "m2:/root/.m2"]
+
+  tests:
+    profiles: ["tools"]
+    build: ../tests/integration
+    environment:
+      ENGINES: "${ENGINES:-lucee7,lucee6,acf2025,acf2023}"
+      MSSQL: "${MSSQL:-1}"         # 0 skips the SQL Server checks (ARM, or no mssql service)
+      GRAFANA_URL: "http://lgtm:3000"
+    volumes: ["../tests/results:/results"]
+    depends_on:
+      lgtm: { condition: service_started }
+      mssql: { condition: service_healthy, required: false }
+
+volumes:
+  m2: {}                         # Maven cache for the build service

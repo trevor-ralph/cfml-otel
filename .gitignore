@@ -5,7 +5,6 @@ lib/*.jar
 # downloaded / generated
 dev/agent/
 dev/coldbox/
-dev/jdbc/
 tests/results/
 spike/agent/
 spike/jars/

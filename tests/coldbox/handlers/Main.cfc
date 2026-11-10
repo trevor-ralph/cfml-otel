@@ -1,5 +1,5 @@
 /**
- * Handler for the ColdBox integration checks in tests/run-integration.ps1.
+ * Handler for the ColdBox integration checks in tests/integration/test_coldbox.py.
  */
 component {
 

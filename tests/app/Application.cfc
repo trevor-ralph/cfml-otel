@@ -11,13 +11,24 @@ component {
     // 1. Put the OTel API jars + bridge jar on this app's classpath
     this.javaSettings = { loadPaths: [ variables.repoRoot & "/lib/" ], loadColdFusionClassPath: true, reloadOnChange: false };
 
-    // Test-only (not part of the wiring): an in-memory H2 database for the cfquery scenario. The H2 driver
-    // is in the server's lib folder (dev/docker-compose.yml). The two engines spell a JDBC datasource differently.
-    variables.h2Url = "jdbc:h2:mem:cfmlotel;DB_CLOSE_DELAY=-1";
+    // Test-only (not part of the wiring): the SQL Server container for the cfquery scenario, through each
+    // engine's own SQL Server driver: Lucee's bundled Microsoft driver, ACF's built-in "MSSQLServer" driver
+    // (the cfpm "sqlserver" package). Host and throwaway password come from dev/docker-compose.yml.
+    variables.jSystem = createObject("java", "java.lang.System");
+    variables.dbHost = variables.jSystem.getenv("MSSQL_HOST") ?: "mssql";
+    variables.dbPassword = variables.jSystem.getenv("MSSQL_PASSWORD") ?: "";
     if (structKeyExists(server, "lucee")) {
-        this.datasources["cfmlotel_h2"] = { "class": "org.h2.Driver", "connectionString": variables.h2Url, "username": "sa", "password": "" };
+        this.datasources["cfmlotel_mssql"] = {
+            "class": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+            "bundleName": "org.lucee.mssql",
+            "connectionString": "jdbc:sqlserver://#variables.dbHost#:1433;DatabaseName=master;encrypt=false",
+            "username": "sa", "password": variables.dbPassword
+        };
     } else {
-        this.datasources["cfmlotel_h2"] = { "driver": "other", "class": "org.h2.Driver", "url": variables.h2Url, "username": "sa", "password": "" };
+        this.datasources["cfmlotel_mssql"] = {
+            "driver": "MSSQLServer", "host": variables.dbHost, "port": 1433, "database": "master",
+            "username": "sa", "password": variables.dbPassword
+        };
     }
 
     // 2. One facade per application

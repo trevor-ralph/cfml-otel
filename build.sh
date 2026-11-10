@@ -36,12 +36,18 @@ for a in api context common; do
         "$ROOT/lib/opentelemetry-$a-$API_VERSION.jar"
 done
 
-# 2. Bridge jar (on Git Bash for Windows, stop MSYS rewriting container paths like /src)
-HOST_JAVA="$ROOT/java"
-command -v cygpath >/dev/null && HOST_JAVA="$(cygpath -w "$HOST_JAVA")"
-MSYS_NO_PATHCONV=1 docker run --rm \
-  -v "$HOST_JAVA:/src" -v cfml-otel-m2:/root/.m2 -w /src \
-  "$MAVEN_IMAGE" mvn -B -q -Dotel.api.version="$API_VERSION" clean package
+# 2. Bridge jar. Inside the build container (`docker compose run --rm build`) Maven is on the PATH;
+#    anywhere else it compiles in a throwaway Maven container, so the host never needs a JDK.
+if command -v mvn >/dev/null; then
+  (cd "$ROOT/java" && mvn -B -q -Dotel.api.version="$API_VERSION" clean package)
+else
+  # on Git Bash for Windows, stop MSYS rewriting container paths like /src
+  HOST_JAVA="$ROOT/java"
+  command -v cygpath >/dev/null && HOST_JAVA="$(cygpath -w "$HOST_JAVA")"
+  MSYS_NO_PATHCONV=1 docker run --rm \
+    -v "$HOST_JAVA:/src" -v cfml-otel-m2:/root/.m2 -w /src \
+    "$MAVEN_IMAGE" mvn -B -q -Dotel.api.version="$API_VERSION" clean package
+fi
 rm -f "$ROOT"/lib/cfml-otel-bridge-*.jar
 cp "$ROOT"/java/target/cfml-otel-bridge-*.jar "$ROOT/lib/"
 

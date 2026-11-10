@@ -53,11 +53,12 @@ gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 **From source:**
 
 ```bash
-./build.sh
+docker compose -f dev/docker-compose.yml run --rm build    # any OS, only Docker needed
+./build.sh                                                  # or directly on Linux / macOS / Git Bash
 ```
 
 This fetches `opentelemetry-api`, `-context` and `-common` (SHA-1 verified, from Maven Central) and
-compiles the bridge in a Maven container. You need bash, curl and Docker, but no local JDK. It also downloads the
+compiles the bridge with Maven, in a container, so no local JDK is needed. It also downloads the
 javaagent into `dev/agent/` for the dev stack.
 
 **Version rule:** the API jars must be **≤ the agent's bundled SDK version**. Agent 2.33.1 bundles SDK 1.67.0,
@@ -199,12 +200,26 @@ thread name="t2" { application.otel.runInContext(ctx, function() { ... }); }
 
 Nothing to do: the agent's JDBC instrumentation traces `cfquery` / `queryExecute` on both engines, one CLIENT
 span per statement, nested under whatever span is current (the SERVER span, or your own `span()`). Tested
-on all four engines with H2:
+on all four engines against SQL Server 2022, with each engine's own driver (Lucee's bundled Microsoft
+driver, ACF's built-in "Microsoft SQL Server" driver):
 
-- Span name: operation + table, e.g. `SELECT mydb.orders`.
-- Attributes: `db.system`, `db.name`, `db.operation`, `db.sql.table`, `db.user`, `db.statement`.
+- Span name: operation + table, e.g. `SELECT dbo.orders`.
+- Attributes: `db.system`, `db.name`, `db.operation`, `db.sql.table`, `db.user`, `db.statement`,
+  `server.address`, `server.port`.
 - `db.statement` is sanitized: literal values are replaced with `?` (`VALUES (1, 'first')` becomes
   `VALUES (?, ?)`), so data from queries isn't recorded by default.
+
+**ACF's built-in SQL Server driver loses the database identity.** It connects with
+`jdbc:macromedia:sqlserver://...` URLs, which the agent's JDBC URL parser doesn't recognise. Queries are
+still traced, with correct SQL, operation, table and nesting. But `db.system` is `other_sql` instead of
+`mssql`, and `server.address`, `server.port` and `db.name` are missing. So Grafana's service graph and
+database views can't tell which SQL Server a query went to. Lucee (Microsoft's driver,
+`jdbc:sqlserver://`) is unaffected. Options:
+- Accept it: the SQL, timings and errors are all there.
+- Configure the datasource with Microsoft's JDBC driver as an "Other" driver (`jdbc:sqlserver://...`),
+  which the agent parses fully.
+- The real fix is upstream, in the agent's
+  [JDBC URL parser](https://github.com/open-telemetry/opentelemetry-java-instrumentation).
 
 Wrap a group of queries in `otel.span("orders.load", ...)` to see them as one unit of work.
 
@@ -283,15 +298,19 @@ Sources: FusionReactor's [OTel migration guide](https://docs.fusionreactor.io/Ge
 
 ## Testing
 
+Everything runs in containers; the host only needs Docker (Linux, macOS or Windows). From `dev/`:
+
 ```bash
-./build.sh
-bash dev/fetch-test-deps.sh                      # ColdBox 8.3 (tests/coldbox) + H2 JDBC driver (cfquery), checksum-verified
-cd dev && docker compose up -d                   # Lucee 7, Lucee 6, ACF 2025, ACF 2023 + grafana/otel-lgtm
-pwsh ../tests/run-integration.ps1                # or: -Engines lucee7,acf2023
+docker compose run --rm build                                    # lib/, the javaagent, ColdBox (checksum-verified)
+docker compose up -d lgtm mssql lucee7 lucee6 acf2025 acf2023    # Grafana LGTM, SQL Server 2022, the engines
+docker compose run --rm tests                                    # pytest; e.g. ENGINES=lucee7,acf2023
 ```
 
-[tests/app/scenarios.cfm](tests/app/scenarios.cfm) runs each scenario with a known `traceparent`. Then
-[tests/run-integration.ps1](tests/run-integration.ps1) checks the results through Grafana's datasource proxy:
+On Linux you can also run `./build.sh` and `bash dev/fetch-test-deps.sh` directly (bash, curl, Docker).
+
+[tests/app/scenarios.cfm](tests/app/scenarios.cfm) runs each scenario with a known `traceparent`. Then the
+pytest runner in [tests/integration](tests/integration) checks the results through Grafana's datasource
+proxy:
 - Span parentage, status, events and attribute types in **Tempo**.
 - Metrics in **Prometheus**.
 - Trace-correlated logs in **Loki**.
@@ -299,12 +318,27 @@ pwsh ../tests/run-integration.ps1                # or: -Engines lucee7,acf2023
 It also leaks a scope deliberately and sends 40 more requests to make sure no pooled thread inherits it.
 The ColdBox app in [tests/coldbox](tests/coldbox) loads this repo as an installed module and checks the
 injection, the interceptor's span attributes, exception recording, and scope cleanup after both normal
-and failing events. Grafana is at
-http://localhost:3000. The ACF containers accept Adobe's EULA (developer/trial edition) via `acceptEULA=YES`.
+and failing events. `cfquery` runs against the SQL Server container.
 
-[CI](.github/workflows/ci.yml) runs the same suite on every push and pull request, one job per engine
-([tests/wait-for-stack.sh](tests/wait-for-stack.sh) waits out ACF's first-boot restart). Pushing a `v*` tag
-that matches `box.json`'s version runs [release.yml](.github/workflows/release.yml), which builds and publishes the release zip.
+Known engine behaviour is reported as `xfail`, not hidden:
+- `cfthread` without `bindContext()` loses the trace (every engine).
+- Lucee 6, the LDEV-6519 control, gets the wrong `traceparent` on `cfhttp`.
+- ACF's built-in SQL Server driver gives `db.system=other_sql`.
+
+The runner waits for each engine itself, including ACF's first-boot restart, and writes `junit.xml` and
+the raw scenario responses to `tests/results/`. Grafana is at http://localhost:3000.
+
+Licences accepted by the dev stack, for development and testing only:
+- **Adobe's ColdFusion EULA** (developer/trial edition): `acceptEULA=YES`.
+- **Microsoft's SQL Server EULA** (Developer edition, not for production): `ACCEPT_EULA=Y`.
+
+**Architecture:** the library is CPU-neutral (CFML + Java bytecode), and the Lucee, Grafana, Maven and
+Python images support x86-64 and ARM. The ACF and SQL Server images are x86-64 only. On ARM, run the Lucee
+engines without SQL Server: `MSSQL=0 docker compose run --rm --no-deps tests` with `ENGINES=lucee7,lucee6`.
+
+[CI](.github/workflows/ci.yml) runs the suite on every push and pull request: one x86-64 job per engine,
+and Lucee 7 and 6 on GitHub's ARM runners. Pushing a `v*` tag that matches `box.json`'s version runs
+[release.yml](.github/workflows/release.yml), which builds and publishes the release zip.
 
 ## Roadmap
 

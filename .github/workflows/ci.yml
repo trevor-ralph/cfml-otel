@@ -1,4 +1,6 @@
-# Builds lib/ and runs the integration suite (Tempo / Prometheus / Loki checks) on every engine.
+# Builds lib/ and runs the integration suite (Tempo / Prometheus / Loki checks) on every engine, with the
+# same containerized commands as a local run (README "Testing"). Lucee also runs on ARM; the ACF and
+# SQL Server images are x86-64 only, so the ARM jobs skip the SQL Server checks.
 name: CI
 
 on:
@@ -16,49 +18,53 @@ concurrency:
 
 jobs:
   integration:
-    name: integration (${{ matrix.engine }})
-    runs-on: ubuntu-latest
+    name: integration (${{ matrix.engine }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        engine: [lucee7, lucee6, acf2025, acf2023]
+        include:
+          - { engine: lucee7,  arch: x64,   runner: ubuntu-latest,    mssql: "1" }
+          - { engine: lucee6,  arch: x64,   runner: ubuntu-latest,    mssql: "1" }
+          - { engine: acf2025, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
+          - { engine: acf2023, arch: x64,   runner: ubuntu-latest,    mssql: "1" }
+          - { engine: lucee7,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
+          - { engine: lucee6,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
+    env:
+      ENGINES: ${{ matrix.engine }}
+      MSSQL: ${{ matrix.mssql }}
+      EXPORT_WAIT_SECONDS: "20"
+    defaults:
+      run:
+        working-directory: dev
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Check version strings agree
-        run: bash tests/check-versions.sh
+        run: bash ../tests/check-versions.sh
 
-      - name: Build lib/ and fetch the agent
-        run: ./build.sh
+      - name: Build lib/, fetch the agent and test dependencies
+        run: docker compose run --rm --quiet-pull build
 
-      - name: Fetch test dependencies (ColdBox, H2 JDBC driver)
-        run: bash dev/fetch-test-deps.sh
+      - name: Start Grafana LGTM (and SQL Server)
+        run: |
+          services=(lgtm)
+          if [[ "$MSSQL" == "1" ]]; then services+=(mssql); fi
+          docker compose up -d --wait --quiet-pull "${services[@]}"
 
-      - name: Start LGTM + ${{ matrix.engine }}
-        run: docker compose -f dev/docker-compose.yml up -d --quiet-pull lgtm "$ENGINE"
-        env:
-          ENGINE: ${{ matrix.engine }}
-
-      - name: Wait for the stack
-        run: tests/wait-for-stack.sh "$ENGINE"
-        env:
-          ENGINE: ${{ matrix.engine }}
+      - name: Start ${{ matrix.engine }}
+        run: docker compose up -d --quiet-pull "$ENGINES"
 
       - name: Integration tests
-        shell: pwsh
-        run: ./tests/run-integration.ps1 -Engines $env:ENGINE -ExportWaitSeconds 20
-        env:
-          ENGINE: ${{ matrix.engine }}
+        run: docker compose run --rm --no-deps tests
 
       - name: Container logs
         if: failure()
-        run: docker compose -f dev/docker-compose.yml logs --tail 200 "$ENGINE"
-        env:
-          ENGINE: ${{ matrix.engine }}
+        run: docker compose logs --tail 200 "$ENGINES"
 
       - name: Stop the stack
         if: always()
-        run: docker compose -f dev/docker-compose.yml down
+        run: docker compose down

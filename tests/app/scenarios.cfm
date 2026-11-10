@@ -1,6 +1,6 @@
 <cfscript>
 /*
- * Integration scenarios. Called with a known traceparent; returns JSON that run-integration.ps1
+ * Integration scenarios. Called with a known traceparent; returns JSON that the pytest runner (tests/integration)
  * cross-checks against Tempo / Prometheus / Loki.
  */
 setting showdebugoutput=false requesttimeout=60;
@@ -225,18 +225,22 @@ scenario("scopeClosedEarly", function() {
     return r;
 });
 
-// cfquery / queryExecute: the agent's JDBC instrumentation creates CLIENT spans for each statement, and they
-// nest under the cfml-otel span that is current when the query runs
-scenario("cfquery", function() {
-    return otel.span("s18.db", function(s) {
-        var ds = { "datasource": "cfmlotel_h2" };
-        queryExecute("CREATE TABLE IF NOT EXISTS cfmlotel_items (id INT PRIMARY KEY, name VARCHAR(50))", {}, ds);
-        queryExecute("MERGE INTO cfmlotel_items KEY(id) VALUES (1, 'first')", {}, ds);
-        var q = queryExecute("SELECT name FROM cfmlotel_items WHERE id = :id",
-            { "id": { "value": 1, "cfsqltype": "cf_sql_integer" } }, ds);
-        return { "spanId": s.getSpanId(), "rows": q.recordCount, "name": q.name[1] };
+// cfquery / queryExecute against SQL Server: the agent's JDBC instrumentation creates CLIENT spans for each
+// statement, nested under the cfml-otel span that is current when the query runs. Skipped with ?db=0 (no
+// SQL Server container, e.g. on ARM).
+if (!structKeyExists(url, "db") || url.db != 0) {
+    scenario("cfquery", function() {
+        return otel.span("s18.db", function(s) {
+            var ds = { "datasource": "cfmlotel_mssql" };
+            queryExecute("IF OBJECT_ID('dbo.cfmlotel_items') IS NULL CREATE TABLE dbo.cfmlotel_items (id INT PRIMARY KEY, name NVARCHAR(50))", {}, ds);
+            queryExecute("MERGE INTO dbo.cfmlotel_items AS t USING (SELECT 1 AS id, N'first' AS name) AS s ON t.id = s.id
+                WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name);", {}, ds);
+            var q = queryExecute("SELECT name FROM dbo.cfmlotel_items WHERE id = :id",
+                { "id": { "value": 1, "cfsqltype": "cf_sql_integer" } }, ds);
+            return { "spanId": s.getSpanId(), "rows": q.recordCount, "name": q.name[1] };
+        });
     });
-});
+}
 
 cfcontent(type = "application/json", reset = true);
 writeOutput(serializeJSON(out));
