@@ -3,7 +3,7 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
-## [Unreleased]
+## [0.3.1] - 2026-11-10
 
 ### Fixed
 - `onError()` on ACF: with the SDK fallback, the request's SERVER span now gets the exception's type as

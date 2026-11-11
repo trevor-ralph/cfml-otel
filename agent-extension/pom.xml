@@ -6,7 +6,7 @@
 
   <groupId>cfmlotel</groupId>
   <artifactId>cfml-otel-agent-extension</artifactId>
-  <version>0.3.0</version>
+  <version>0.3.1</version>
   <packaging>jar</packaging>
   <description>OpenTelemetry javaagent extension: identifies the database behind Adobe ColdFusion's built-in
     (macromedia / DataDirect) JDBC drivers. Loaded with -Dotel.javaagent.extensions=.</description>

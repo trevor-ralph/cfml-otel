@@ -6,7 +6,7 @@
 
   <groupId>cfmlotel</groupId>
   <artifactId>cfml-otel-bridge</artifactId>
-  <version>0.3.0</version>
+  <version>0.3.1</version>
   <packaging>jar</packaging>
   <description>Thin static bridge so CFML engines call the OpenTelemetry API through its public interfaces.</description>
 
