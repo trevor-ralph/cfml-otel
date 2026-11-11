@@ -3,7 +3,7 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
-## [Unreleased]
+## [0.3.2] - 2026-11-10
 
 ### Changed
 - `span()` and `makeCurrent()` are faster, most of all on Adobe ColdFusion: scope tokens no longer come from
