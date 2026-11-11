@@ -655,6 +655,27 @@ Java libraries make outside `cfquery`. Tested on ACF 2023 with FusionReactor 202
 as it does without FusionReactor, and FusionReactor's request log still shows each request's JDBC query count. Not in
 CI, which has no FusionReactor.
 
+**Choosing which agent handles JDBC.** Only one of the two can instrument a driver's classes (making both do it
+fails; see above), so pick per server, or per environment, with JVM options:
+
+| JDBC handled by | JVM options | Result |
+|---|---|---|
+| The OTel agent | `-Dfr.mixin.black.list=/path/to/cfml-otel/lib/agent/fusionreactor-jdbc-mixin-blacklist.csv` | Full OTel database spans. FusionReactor still records `cfquery` / `queryExecute`, but no longer sees JDBC that bypasses them (ColdFusion ORM / Hibernate, Java libraries). |
+| FusionReactor | no blacklist, and `-Dotel.instrumentation.jdbc.enabled=false` | FusionReactor keeps all its JDBC instrumentation; OTel records no database spans. |
+
+- **It's a startup setting, not a runtime one.** Both agents decide as the driver classes load, so a change needs a
+  ColdFusion restart, and it applies to the whole JVM, not per application.
+- **Make the FusionReactor choice explicit.** Leaving out the blacklist already costs the OTel spans; setting
+  `otel.instrumentation.jdbc.enabled=false` as well says it was meant. `FUSIONREACTOR_JDBC_MIXINS` only fires while
+  the agent's JDBC instrumentation is on, so this setup has no warning.
+- **Per driver:** the blacklist is a list of package prefixes. To split by driver, copy the file and keep only the
+  drivers the OTel agent should have. For example, `macromedia/jdbc` and `com/microsoft/sqlserver` for SQL Server,
+  leaving MySQL to FusionReactor.
+- **One switch from an environment variable:** FusionReactor reads `fr.mixin.black.list` only as a system property,
+  not from the environment. The OTel side can be `OTEL_INSTRUMENTATION_JDBC_ENABLED`. So have the script that starts
+  ColdFusion (Docker entrypoint, deploy template) add the `-Dfr.mixin.black.list=` option when your own variable asks
+  for OTel.
+
 **FusionReactor's own logs end up in Loki.** With both agents attached, the OTel agent's log capture also picks
 up FusionReactor's internal log streams (`com.intergral.fusionreactor.logging.*`: heartbeat, gc, memory, classes
 and so on), at the same rate as everything else. Drop them in the Collector, like the engine loggers in

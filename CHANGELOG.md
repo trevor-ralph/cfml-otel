@@ -50,8 +50,9 @@ release notes.
   `GET /index.cfm`. Set `setRoute: false` to keep the old names.
 
 ### Documented
-- FusionReactor alongside the agent: why the agent's database spans disappeared and the fix (above), and how to
-  filter FusionReactor's internal log streams out of Loki.
+- FusionReactor alongside the agent: why the agent's database spans disappeared and the fix (above), how to choose
+  which of the two agents handles JDBC (per server, or per driver), and how to filter FusionReactor's internal log
+  streams out of Loki.
 - ACF started as a service: configure the agent with `-Dotel.*` in `jvm.config`, since `sudo` / init scripts
   drop the environment.
 - `onError()` marks a request as failed even when its error page goes out as 200 (now tested).
