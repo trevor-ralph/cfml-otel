@@ -3,7 +3,7 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
-## [Unreleased]
+## [0.3.0] - 2026-11-10
 
 ### Added
 - **Agent extension for ACF's built-in database drivers** (`lib/agent/cfml-otel-agent-extension.jar`, loaded with

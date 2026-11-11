@@ -56,7 +56,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class OtelBridge {
 
-  public static final String VERSION = "0.2.0";
+  public static final String VERSION = "0.3.0";
 
   /** The javaagent release the integration tests run against (build.sh AGENT_VERSION). */
   public static final String TESTED_AGENT_VERSION = "2.33.1";

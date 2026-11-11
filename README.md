@@ -11,7 +11,7 @@ attributes, metrics, OTel logs correlated with the trace, and context propagatio
 `runAsync` and message boundaries. Everything goes to the agent's SDK and exporters, so you ship
 OTLP to a Collector / Grafana Alloy and on to Tempo, Loki and Mimir/Prometheus (or any OTLP backend).
 
-> Status: **0.2.0**. Integration-tested (plain CFML, ColdBox 8.3, SQL Server 2022) on Lucee 8.0.0, Lucee 7.1.2,
+> Status: **0.3.0**. Integration-tested (plain CFML, ColdBox 8.3, SQL Server 2022) on Lucee 8.0.0, Lucee 7.1.2,
 > Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26, with agent 2.33.1 and without any agent
 > ([SDK fallback](#without-the-javaagent-sdk-fallback)) — see [Testing](#testing).
 
