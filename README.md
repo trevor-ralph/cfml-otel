@@ -597,6 +597,34 @@ Tomcat's startup and connector logs, and cfml-otel's own `cfml-otel` warnings. T
 **LogBox (ColdBox):** its file appenders write files directly, so the agent doesn't see them. LogBox's
 `CFAppender` logs through `cflog`, so its output is captured, with the trace ID (tested on all four engines).
 
+## Performance
+
+Measured in the dev stack (2 CPUs per engine, 10 concurrent users, pages that take 1-7 ms; 2026-11, agent 2.33.1).
+Treat these as orders of magnitude, not a promise for your servers.
+
+**The javaagent:**
+- **CPU:** a few hundredths of a millisecond per request, query and span. On Lucee 7.1 about 0.07 ms per request,
+  0.026 ms per query and 0.016 ms per span. On those tiny pages, throughput dropped 6-9% for plain CFML and 14-19%
+  for a page with 10 queries, on both engines. On a page that takes 50-200 ms it's a percent or two.
+- **Memory:** about 80 MB more on Lucee; more on ACF, where the measurement was noisy.
+- **Startup:** a few seconds more on Lucee; on ACF an estimated 25 s more per JVM start (the Docker image restarts
+  ColdFusion several times while starting, so it couldn't be timed cleanly).
+- **Sampling** (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `OTEL_TRACES_SAMPLER_ARG=0.1`) mostly cuts export
+  volume and backend storage. The agent still instruments every call, so CPU barely changes; the 10-query page on
+  ACF got back about 40% of its overhead.
+
+**cfml-otel's own calls**, timed one at a time:
+
+| Call | Lucee 7.1 | ACF 2023 |
+|---|---|---|
+| `otel.span(name, fn)` | ~27 µs | ~62 µs |
+| `otel.counter(name).add(1, attrs)` | ~8 µs | ~12 µs |
+
+**ACF with Trusted Cache off:** every span creates a `Span` component, and with Trusted Cache off ACF checks that
+component's file on each creation. On a normal disk that's about 13 µs. On a slow file system it can be far more:
+about 0.8 ms per span on the dev stack, whose code is mounted from Windows into Docker. Turn on Trusted Cache in
+production (ColdFusion Administrator > Server Settings > Caching), which Adobe's lockdown guide recommends anyway.
+
 ## Gotchas this library handles (and you should know about)
 
 * **Leaked scopes poison pooled threads.** A span made current and never closed stays current on that

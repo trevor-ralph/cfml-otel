@@ -3,6 +3,18 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
+## [Unreleased]
+
+### Changed
+- `span()` and `makeCurrent()` are faster, most of all on Adobe ColdFusion: scope tokens no longer come from
+  `createUUID()`, which costs about 100 µs on ACF, and a `span()` looks up its thread's scopes once instead of
+  twice. Per `span()`: ACF 2023 about 105 µs to 62 µs, Lucee 7.1 about 40 µs to 27 µs.
+
+### Documented
+- A Performance section: what the javaagent costs (CPU per request, query and span, memory, startup, sampling) and
+  cfml-otel's own calls, from load tests on Lucee and ACF; and why ACF needs Trusted Cache in production (each span
+  creates a component, whose file ACF otherwise checks every time).
+
 ## [0.3.1] - 2026-11-10
 
 ### Fixed

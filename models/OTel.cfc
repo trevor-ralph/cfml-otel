@@ -68,6 +68,8 @@ component {
         st.abortHookSeen = false;
         // setRoute() logs once when opentelemetry-instrumentation-api isn't usable
         st.routeWarned = false;
+        // scope tokens: this prefix + the bridge's scope sequence (see _trackScope())
+        st.tokenPrefix = "s" & left(replace(createUUID(), "-", "", "all"), 12) & "-";
 
         if (!cfg.enabled) {
             st.reason = "disabled by configuration";
@@ -648,11 +650,7 @@ component {
                 message = "Scope token is not open on this thread",
                 detail = "Scopes must be closed on the thread that opened them (cfthread/runAsync run on other threads).");
         }
-        var leaked = this._closeScopes(reg, reg[arguments.token].seq) - 1;
-        if (leaked > 0 && st.config.logLeakedScopes) {
-            writeLog(type = "warning", file = "cfml-otel",
-                text = "cfml-otel closed #leaked# leaked OpenTelemetry scope(s) left open inside an enclosing scope (trace #this.traceId()#)");
-        }
+        this._closeOpenScope(reg, arguments.token);
     }
 
     /**
@@ -661,7 +659,18 @@ component {
      */
     public void function _releaseScope(required string token) {
         if (!this.__state.enabled || !len(arguments.token)) return;
-        if (structKeyExists(this._threadRegistry(), arguments.token)) this.closeScope(arguments.token);
+        // one registry lookup, not two through closeScope(): this runs for every span()
+        var reg = this._threadRegistry();
+        if (structKeyExists(reg, arguments.token)) this._closeOpenScope(reg, arguments.token);
+    }
+
+    /** @hint internal: closes an open token (and anything opened after it, which leaked) in this thread's registry */
+    public void function _closeOpenScope(required any reg, required string token) {
+        var leaked = this._closeScopes(arguments.reg, arguments.reg[arguments.token].seq) - 1;
+        if (leaked > 0 && this.__state.config.logLeakedScopes) {
+            writeLog(type = "warning", file = "cfml-otel",
+                text = "cfml-otel closed #leaked# leaked OpenTelemetry scope(s) left open inside an enclosing scope (trace #this.traceId()#)");
+        }
     }
 
     /** @hint internal: closes this thread's scopes opened at or after minSeq, innermost first; returns how many */
@@ -824,10 +833,13 @@ component {
     /** @hint internal: used by Span.makeCurrent() */
     public string function _trackScope(required any javaScope) {
         var reg = this._threadRegistry();
-        var token = createUUID();
         // seq orders scopes so they can be closed innermost-first. A process-wide counter in the bridge,
         // not a clock: two scopes opened back to back always get distinct, increasing values.
-        reg[token] = { "scope": arguments.javaScope, "seq": this.__state.bridge.nextScopeSeq() };
+        var seq = this.__state.bridge.nextScopeSeq();
+        // The token is seq behind this instance's random prefix (one per class loader's counter), not a
+        // createUUID() per scope: that costs ~100 us on Adobe ColdFusion, most of what a span() costs there.
+        var token = this.__state.tokenPrefix & seq;
+        reg[token] = { "scope": arguments.javaScope, "seq": seq };
         return token;
     }
 
