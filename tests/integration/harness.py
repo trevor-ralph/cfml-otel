@@ -183,6 +183,7 @@ class Span:
     attrs: dict
     events: list[dict] = field(default_factory=list)   # [{"name":..., "attrs": {...}}]
     scope: str = ""                                     # instrumentation scope (tracer) name
+    status_message: str = ""                            # the status description (ERROR only)
 
     def event_attr(self, event: str, key: str) -> list:
         return [e["attrs"].get(key) for e in self.events if e["name"] == event]
@@ -205,6 +206,7 @@ def spans(trace_id: str) -> list[Span]:
                             status=sp.get("status", {}).get("code", ""), attrs=_attrs(sp.get("attributes")),
                             events=[{"name": e.get("name"), "attrs": _attrs(e.get("attributes"))} for e in sp.get("events", [])],
                             scope=ss.get("scope", {}).get("name", ""),
+                            status_message=sp.get("status", {}).get("message", ""),
                         ))
         _trace_cache[trace_id] = out
     return _trace_cache[trace_id]

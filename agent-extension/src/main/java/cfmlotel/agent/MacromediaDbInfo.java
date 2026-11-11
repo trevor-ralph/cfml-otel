@@ -1,5 +1,6 @@
 package cfmlotel.agent;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.sql.Connection;
@@ -26,7 +27,8 @@ public final class MacromediaDbInfo {
     "io.opentelemetry.instrumentation.jdbc.internal."
   };
 
-  private static final Map<ClassLoader, Accessors> cache = new WeakHashMap<>();
+  private static final int MAX_MISSES = 20;
+  private static final Map<ClassLoader, Lookup> cache = new WeakHashMap<>();
   private static volatile boolean warned;
 
   private MacromediaDbInfo() {}
@@ -92,19 +94,40 @@ public final class MacromediaDbInfo {
 
   private static Accessors accessors(ClassLoader loader) {
     synchronized (cache) {
-      if (cache.containsKey(loader)) {
-        return cache.get(loader);
+      Lookup known = cache.get(loader);
+      if (known == null) {
+        known = new Lookup();
+        cache.put(loader, known);
       }
-      Accessors a = null;
+      Accessors a = known.found == null ? null : known.found.get();
+      if (a != null || known.misses >= MAX_MISSES) {
+        return a;
+      }
       for (String pkg : PACKAGES) {
         a = Accessors.find(loader, pkg);
         if (a != null) {
           break;
         }
       }
-      cache.put(loader, a);
+      if (a == null) {
+        known.misses++;
+      } else {
+        known.found = new WeakReference<>(a);
+      }
       return a;
     }
+  }
+
+  /**
+   * What is known about one class loader. The accessors are held weakly: their Method and Field objects lead
+   * back to the loader, which a strong reference from the WeakHashMap's value would keep alive for good
+   * (they are looked up again after a collection). A miss is retried on later connections, because the agent
+   * injects its JDBC classes into a loader lazily, but only {@link #MAX_MISSES} times: with an agent that
+   * renamed them, every new connection would otherwise pay for the failed lookups.
+   */
+  private static final class Lookup {
+    WeakReference<Accessors> found;
+    int misses;
   }
 
   private static final class Accessors {

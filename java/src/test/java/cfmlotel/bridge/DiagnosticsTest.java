@@ -62,6 +62,35 @@ class DiagnosticsTest {
   }
 
   @Test
+  void httpClientInstrumentationTurnedOffByItsVersionedNameCounts() {
+    assertEquals(List.of(),
+        codes(withConfig(healthy("lucee"), "otel.instrumentation.apache-httpclient-4.0.enabled", "false")));
+    Map<String, String> m = new HashMap<>();
+    m.put("otel.instrumentation.apache-httpclient-4.0.enabled", "false");
+    assertFalse(Diagnostics.httpClientInstrumentationOn(k -> m.getOrDefault(k, "")));
+    // off by default: either name turns it on
+    m.clear();
+    m.put("otel.instrumentation.common.default-enabled", "false");
+    assertFalse(Diagnostics.httpClientInstrumentationOn(k -> m.getOrDefault(k, "")));
+    m.put("otel.instrumentation.apache-httpclient-4.0.enabled", "true");
+    assertTrue(Diagnostics.httpClientInstrumentationOn(k -> m.getOrDefault(k, "")));
+  }
+
+  @Test
+  void agentConfigurationFileIsReadWithNormalizedKeys(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+      throws Exception {
+    java.nio.file.Path file = dir.resolve("agent.properties");
+    java.nio.file.Files.write(file, java.util.Arrays.asList(
+        "otel.instrumentation.apache_httpclient.enabled = false", "OTEL.SERVICE.NAME=orders"));
+    Map<String, String> conf = Diagnostics.readConfigFile(file);
+    assertEquals("false", Diagnostics.fromConfigFile(conf, "otel.instrumentation.apache-httpclient.enabled"));
+    assertEquals("orders", Diagnostics.fromConfigFile(conf, "otel.service.name"));
+    assertEquals("", Diagnostics.fromConfigFile(conf, "otel.sdk.disabled"));
+    assertFalse(Diagnostics.httpClientInstrumentationOn(k -> Diagnostics.fromConfigFile(conf, k)));
+    assertEquals(Map.of(), Diagnostics.readConfigFile(dir.resolve("missing.properties")));
+  }
+
+  @Test
   void noAgentAtAll() {
     Diagnostics.Facts f = healthy("acf");
     f.otelAgentPresent = false;

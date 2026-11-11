@@ -39,6 +39,7 @@ component {
         this.__state = {
             "config": cfg,
             "instruments": {},
+            "instrumentDefs": {},     // unit/description each cached instrument was created with
             "enabled": false,
             "agentBridged": false,
             "active": false,
@@ -72,6 +73,8 @@ component {
             st.reason = "disabled by configuration";
             return this;
         }
+        // the fallback SDK this init() started, so a failure further down can stop it again
+        var startedSdk = "";
         try {
             st.bridge = createObject("java", cfg.bridgeClass);
             // The OpenTelemetry this instance reports through: the global one (the agent's, or a no-op), or with
@@ -81,7 +84,10 @@ component {
                 if (!st.bridge.isActive() && !st.bridge.isAgentAttached()) {
                     var started = st.bridge.startSdkFallback({ "otel.service.name": this._defaultServiceName() },
                         len(cfg.serviceName) ? { "otel.service.name": cfg.serviceName } : {});
-                    if (started.get("started")) st.otel = started.get("sdk");
+                    if (started.get("started")) {
+                        st.otel = started.get("sdk");
+                        startedSdk = st.otel;
+                    }
                     st.sdk = { "started": started.get("started"), "serviceName": started.get("serviceName"), "error": started.get("error") };
                 } else {
                     st.sdk = { "started": false, "serviceName": "", "error": "", "notNeeded": true };
@@ -100,6 +106,13 @@ component {
             st.mode = isSdk ? "sdk" : (st.agentBridged ? "agent" : (st.active ? "other" : "noop"));
             if (!st.active) st.reason = "OpenTelemetry API loaded but no SDK/agent is active (no-op)";
         } catch (any e) {
+            // this instance stays a no-op, and shutdown() does nothing then: don't leave the SDK's exporters running
+            if (!isSimpleValue(startedSdk)) {
+                try {
+                    st.bridge.shutdownSdkFallback(startedSdk);
+                } catch (any ignored) {}
+                st.sdk = {};
+            }
             st.reason = "could not load #cfg.bridgeClass# (are cfml-otel/lib jars in this.javaSettings.loadPaths?): " & e.message;
             st.diagnostics.warnings = [{ "level": "warn", "code": "BRIDGE_NOT_LOADED",
                 "message": "cfml-otel is a no-op: " & st.reason }];
@@ -286,7 +299,9 @@ component {
             if (st.mode == "agent") {
                 var failed = st.bridge.setServerRoute(r, arguments.framework);
                 if (!len(failed)) return true;
-                if (!st.routeWarned) {
+                // No SERVER span here (a cfthread, a scheduled task) is not a setup problem: nothing to log, and
+                // the one warning stays available for a real one
+                if (!st.routeWarned && !st.bridge.isNoServerSpan(failed)) {
                     st.routeWarned = true;
                     writeLog(type = "warning", file = "cfml-otel", text = "cfml-otel setRoute(): " & failed
                         & ". Until that changes, setRoute() only sets http.route on the current span (logged once).");
@@ -754,16 +769,21 @@ component {
     public void function onError(required any exception, numeric statusCode = 0, boolean endRequest = true) {
         if (!this.__state.enabled) return;
         var err = arguments.exception;
-        // onError wraps the real error in a struct with a rootCause key on both engines
-        if (isStruct(err) && structKeyExists(err, "rootCause")) err = err.rootCause;
-        var message = isStruct(err) && structKeyExists(err, "message") ? err.message : "";
+        // onError wraps the real error in an object with a rootCause key on both engines. Not tested with
+        // isStruct(): an Adobe ColdFusion exception is a Java object that has keys but isn't a struct.
+        try {
+            if (!isSimpleValue(err) && structKeyExists(err, "rootCause") && !isNull(err.rootCause)
+                    && !isSimpleValue(err.rootCause)) err = err.rootCause;
+        } catch (any ignored) {}
+        var message = this._errorText(err, "message");
         var srv = this._serverOnThisThread();
         if (!structIsEmpty(srv)) {
             // the request thread's fallback SERVER span: record here, then end it (nothing else will) unless the
             // caller ends the request later
             try {
                 srv.span.recordException(err);
-                var et = isStruct(err) && structKeyExists(err, "type") && len(err.type) ? err.type : "_OTHER";
+                var et = this._errorText(err, "type");
+                if (!len(et)) et = "_OTHER";
                 srv.errorType = et;
                 srv.errorMessage = message;
                 if (arguments.endRequest) {
@@ -786,6 +806,19 @@ component {
             s.recordException(err);
             if (arguments.endRequest) s.setStatus("ERROR", message);
         } catch (any ignored) {}
+    }
+
+    /**
+     * @hint internal: the "message" or "type" of a catch variable / onError exception, "" when it has none.
+     * Works for a struct (Lucee) and for an Adobe ColdFusion exception object, which isStruct() rejects.
+     */
+    public string function _errorText(required any error, required string key) {
+        try {
+            if (isSimpleValue(arguments.error)) return "";
+            if (arguments.key == "message" && structKeyExists(arguments.error, "message")) return toString(arguments.error.message);
+            if (arguments.key == "type" && structKeyExists(arguments.error, "type")) return toString(arguments.error.type);
+        } catch (any ignored) {}
+        return "";
     }
 
     /** @hint internal: used by Span.makeCurrent() */
@@ -846,9 +879,21 @@ component {
                 if (!structKeyExists(st.instruments, key)) {
                     var ji = st.bridge.instrument(st.meter, arguments.type, arguments.valueType,
                         arguments.name, arguments.description, arguments.unit);
+                    st.instrumentDefs[key] = { "unit": arguments.unit, "description": arguments.description, "warned": false };
                     st.instruments[key] = duplicate(st.instrumentProto).init(st.bridge, ji, true, lCase(arguments.valueType), arguments.name);
                 }
             }
+        }
+        // One instrument per name: a later call that asks for another unit or description still gets the first
+        // one, so say so (once per instrument) instead of silently recording, say, seconds into milliseconds.
+        var def = st.instrumentDefs[key];
+        if (!def.warned && ((len(arguments.unit) && compare(arguments.unit, def.unit) != 0)
+                || (len(arguments.description) && compare(arguments.description, def.description) != 0))) {
+            def.warned = true;
+            writeLog(type = "warning", file = "cfml-otel",
+                text = "cfml-otel instrument '#arguments.name#' already exists with unit '#def.unit#' and description '#def.description#';"
+                    & " a later call asked for unit '#arguments.unit#' and description '#arguments.description#' and gets the existing one."
+                    & " Use one definition per instrument name (logged once).");
         }
         return st.instruments[key];
     }

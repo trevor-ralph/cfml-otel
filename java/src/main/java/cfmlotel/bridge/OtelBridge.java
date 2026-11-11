@@ -101,7 +101,7 @@ public final class OtelBridge {
    * CLIENT spans for cfhttp by itself (correctly on ACF; on Lucee they start orphan traces, LDEV-6519).
    */
   public static boolean agentTracesHttpClient() {
-    return isAgentBridged() && isActive() && Diagnostics.httpClientInstrumentationOn(Diagnostics::config);
+    return isAgentBridged() && isActive() && Diagnostics.httpClientInstrumentationOn(Diagnostics::agentConfig);
   }
 
   /** http.request.method, server.address, server.port and url.full (credentials and signatures redacted). */
@@ -339,10 +339,20 @@ public final class OtelBridge {
             + ") is loaded by the same class loader as opentelemetry-api (" + api + "). Put it next to the API"
             + " jar (with a server's own API, in that folder rather than in loadPaths)";
       }
-      return "the javaagent didn't take the route: there is no agent SERVER span in this context";
+      return NO_SERVER_SPAN;
     } catch (LinkageError e) {
       return "opentelemetry-instrumentation-api isn't usable here (" + e + "): add lib/'s jar to the loadPaths";
     }
+  }
+
+  static final String NO_SERVER_SPAN = "the javaagent didn't take the route: there is no agent SERVER span in this context";
+
+  /**
+   * True when a setServerRoute() result only says there was no agent SERVER span to name (a cfthread, a
+   * scheduled task): expected there, unlike the setup problems the other results describe.
+   */
+  public static boolean isNoServerSpan(String setServerRouteResult) {
+    return NO_SERVER_SPAN.equals(setServerRouteResult);
   }
 
   public static void updateName(Object span, String name) {

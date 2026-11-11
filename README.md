@@ -253,6 +253,17 @@ yet when `postProcess` runs, so once cfml-otel has seen this `onAbort()` being c
 for it to end. Without it (and for the first redirect after a start) the span is ended at `postProcess` with
 no `http.response.status_code`. With the agent, the agent records the status either way.
 
+If your `exceptionHandler` event can itself fail, also add `onError()`. ColdBox rethrows that second error
+without announcing anything more, so the interceptor never gets to end the request: with the SDK fallback the
+SERVER span would never be ended, and its scope would stay on the pooled thread.
+
+```cfml
+function onError(exception, eventName) {
+    application.cbController.getWireBox().getInstance("OTel@cfmlotel").onError(arguments.exception);
+    // ... your own error page
+}
+```
+
 The module can live in a folder with any name (`modules/cfml-otel` is what `box install` creates).
 
 ### Without the javaagent (SDK fallback)
@@ -337,9 +348,9 @@ writeDump(application.otel.status());
 | `OTEL_ENV_NOT_INHERITED` | Linux: `OTEL_*` variables are set for the container's main process (PID 1) but not in the JVM's environment, typically because ACF was started through `sudo` or an init script. Says when telemetry is going to the default `localhost:4318`. |
 
 The checks read JVM arguments, `JAVA_TOOL_OPTIONS` / `JDK_JAVA_OPTIONS`, system properties and `OTEL_*`
-environment variables as the JVM itself has them, which is what the agent sees too. Settings made only in an
-agent configuration file aren't seen, so a `LUCEE_HTTPCLIENT_INSTRUMENTATION` or `ACF_JDBC_EXTENSION` warning can be
-a false alarm there. `otel.status().agentExtension` says whether the agent extension is configured.
+environment variables as the JVM itself has them, and with the agent also its configuration file
+(`otel.javaagent.configuration-file`), which is what the agent sees too. `otel.status().agentExtension` says whether
+the agent extension is configured.
 
 ## API
 
@@ -402,15 +413,18 @@ application.otel.setRoute("orders.checkout");
 instrumentation, but wrapping it is harmless.
 
 ```cfml
-var work = otel.bindContext(function() {          // captures the context NOW
+request.work = otel.bindContext(function() {      // captures the context NOW
     return otel.span("background-job", function(s) { ... });
 });
-thread name="t1" { work(); }                      // runs in the captured context
+thread name="t1" { request.work(); }              // runs in the captured context
 
 // or explicitly
-var ctx = otel.captureContext();
-thread name="t2" { application.otel.runInContext(ctx, function() { ... }); }
+request.ctx = otel.captureContext();
+thread name="t2" { application.otel.runInContext(request.ctx, function() { ... }); }
 ```
+
+A thread body can't see the local (`var`) variables of the function that starts it, so hand the bound function
+or the context over in a scope the thread shares: the `request` scope as here, or a thread attribute.
 
 ### Propagation
 

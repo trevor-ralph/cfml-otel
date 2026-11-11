@@ -53,7 +53,8 @@ public final class MacromediaJdbcInstrumentationModule extends InstrumentationMo
   /** Built without the agent's muzzle plugin, so the helpers (nested classes too) are listed by hand. */
   @Override
   public List<String> getAdditionalHelperClassNames() {
-    return Arrays.asList("cfmlotel.agent.MacromediaDbInfo", "cfmlotel.agent.MacromediaDbInfo$Accessors");
+    return Arrays.asList("cfmlotel.agent.MacromediaDbInfo", "cfmlotel.agent.MacromediaDbInfo$Accessors",
+        "cfmlotel.agent.MacromediaDbInfo$Lookup");
   }
 
   @Override

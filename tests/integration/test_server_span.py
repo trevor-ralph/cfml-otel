@@ -30,7 +30,19 @@ def test_unhandled_error_marks_the_server_span(run):
     assert server is not None, [s.name for s in harness.spans(run.fail["T"])]
     assert server.status == "STATUS_CODE_ERROR"
     assert "Custom.ServerFail" in server.event_attr("exception", "exception.type"), server.events
+    assert "unhandled on purpose" in server.event_attr("exception", "exception.message"), server.events
     assert server.attrs.get("http.response.status_code") == 500, server.attrs
+
+
+def test_onerror_names_the_error_on_the_fallback_server_span(run):
+    """sdkFallback: onError() reads the type and message of the engine's exception (on ACF a Java object that
+    isStruct() rejects) for error.type and the status description. With the agent, the agent sets both itself."""
+    if not run.target.sdk:
+        pytest.skip("the fallback SERVER span only exists without the agent")
+    server = harness.server_span(run.fail["T"], run.fail["P"])
+    assert server is not None, [s.name for s in harness.spans(run.fail["T"])]
+    assert server.attrs.get("error.type") == "Custom.ServerFail", server.attrs
+    assert server.status_message == "unhandled on purpose", (server.status, server.status_message)
 
 
 def test_error_page_with_status_200_is_still_an_error(run):

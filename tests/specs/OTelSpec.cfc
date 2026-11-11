@@ -59,6 +59,17 @@ component extends="testbox.system.BaseSpec" {
                 expect(s.warnings[1].code).toBe("BRIDGE_NOT_LOADED");
                 expect(broken.span("x", function() { return "still runs"; })).toBe("still runs");
             });
+            // sdkFallback engines only: init() fails after it started an SDK of its own. That instance stays a no-op,
+            // whose shutdown() does nothing, so init() itself must stop the SDK or its exporters run until the JVM
+            // stops. A struct as tracerVersion fails the first bridge call after the SDK start (tracer() takes a String).
+            it("shuts down the fallback SDK it started when init() then fails", function() {
+                if (variables.otel.status().mode != "sdk") return;
+                var bridge = variables.otel.__state.bridge;
+                var before = bridge.sdkFallbackCount();
+                var broken = newOTel({ "sdkFallback": true, "tracerVersion": { "not": "a string" } });
+                expect(broken.status().enabled).toBeFalse();
+                expect(bridge.sdkFallbackCount()).toBe(before, "an SDK started by the failed init() is still running");
+            });
         });
 
         describe("status()", function() {

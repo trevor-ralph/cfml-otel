@@ -3,6 +3,35 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
+## [Unreleased]
+
+### Fixed
+- `onError()` on ACF: with the SDK fallback, the request's SERVER span now gets the exception's type as
+  `error.type` and its message as the status description. ACF's exception is a Java object that `isStruct()`
+  rejects, so these were `_OTHER` and empty.
+- SDK fallback: when `init()` fails after starting cfml-otel's own SDK, it shuts that SDK down again. The instance
+  stays a no-op whose `shutdown()` does nothing, so the SDK's exporters used to run until the JVM stopped.
+- Startup checks with the agent also read its configuration file (`otel.javaagent.configuration-file`), so
+  `LUCEE_HTTPCLIENT_INSTRUMENTATION` and `ACF_JDBC_EXTENSION` no longer warn about settings made there. Whether the
+  agent's HttpClient instrumentation is on follows the agent's own rule (both of its names, and
+  `otel.instrumentation.common.default-enabled=false`).
+- `setRoute()` keeps its one-time warning for real setup problems: a call with no agent SERVER span (a `cfthread`,
+  a scheduled task) no longer uses it up.
+- Metrics: asking for an existing instrument name with another unit or description logs a warning (once per
+  instrument) instead of silently returning the first definition.
+- Agent extension: no longer keeps the driver's class loader alive, and stops retrying the agent's JDBC internals
+  after a bounded number of misses.
+
+### Documented
+- ColdBox: add `onError()` when the `exceptionHandler` event itself can fail, since the interceptor then never
+  ends the request.
+- The `bindContext()` / `captureContext()` example now hands the function to the thread through the `request`
+  scope: a `cfthread` body can't see the starting function's local variables.
+
+### Tests
+- `onError()` on the fallback SERVER span (`error.type`, status description) on every SDK engine, and a spec for
+  the SDK shut down by a failed `init()`; both fail without their fix.
+
 ## [0.3.0] - 2026-11-10
 
 ### Added

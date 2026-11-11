@@ -73,7 +73,8 @@ final class Diagnostics {
     f.agentBridged = OtelBridge.isAgentBridged();
     f.active = OtelBridge.isActiveFor(otel);
     f.sdkFallback = sdkFallback;
-    f.config = Diagnostics::config;
+    // what the agent is configured with includes its configuration file; cfml-otel's own SDK never reads that
+    f.config = sdkFallback ? Diagnostics::config : Diagnostics::agentConfig;
     f.agentExtension = f.config.apply("otel.javaagent.extensions").contains(AGENT_EXTENSION_JAR);
     String frBlackList = System.getProperty("fr.mixin.black.list");
     f.frMixinBlackList = frBlackList == null ? "" : frBlackList.trim();
@@ -155,6 +156,47 @@ final class Diagnostics {
     String v = System.getProperty(key);
     if (v == null) v = System.getenv(key.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_'));
     return v == null ? "" : v.trim();
+  }
+
+  private static volatile Map<String, String> agentConfigFile;
+
+  /**
+   * The javaagent's view of an OTel config value: {@link #config}, then the agent's configuration file
+   * (-Dotel.javaagent.configuration-file / OTEL_JAVAAGENT_CONFIGURATION_FILE, a properties file), else "".
+   */
+  static String agentConfig(String key) {
+    String v = config(key);
+    if (!v.isEmpty()) return v;
+    Map<String, String> file = agentConfigFile;
+    if (file == null) {
+      String path = config("otel.javaagent.configuration-file");
+      file = path.isEmpty() ? Collections.<String, String>emptyMap() : readConfigFile(java.nio.file.Paths.get(path));
+      agentConfigFile = file;
+    }
+    return fromConfigFile(file, key);
+  }
+
+  /** A javaagent configuration (properties) file, keys normalized as the agent does; empty if it can't be read. */
+  static Map<String, String> readConfigFile(java.nio.file.Path file) {
+    Map<String, String> out = new LinkedHashMap<>();
+    try (InputStream in = java.nio.file.Files.newInputStream(file)) {
+      Properties props = new Properties();
+      props.load(in);
+      for (String name : props.stringPropertyNames()) out.put(normalizeKey(name), props.getProperty(name).trim());
+    } catch (Throwable ignored) {
+      // unreadable: the agent says so itself
+    }
+    return out;
+  }
+
+  static String fromConfigFile(Map<String, String> file, String key) {
+    String v = file.get(normalizeKey(key));
+    return v == null ? "" : v;
+  }
+
+  /** The agent treats '-' and '_' in a property name like '.', and ignores case. */
+  private static String normalizeKey(String key) {
+    return key.toLowerCase(Locale.ROOT).replace('_', '.').replace('-', '.');
   }
 
   /** A /proc/<pid>/environ file (NUL-separated KEY=value); empty if it can't be read. */
@@ -377,14 +419,25 @@ final class Diagnostics {
   }
 
   static boolean httpClientInstrumentationOn(Function<String, String> config) {
-    return instrumentationOn(config, "apache-httpclient");
+    // cfhttp is Apache HttpClient 4 on both engines; the agent's module for it answers to both names
+    return instrumentationOn(config, "apache-httpclient", "apache-httpclient-4.0");
   }
 
-  /** Whether the agent's instrumentation of that name is on: its own .enabled setting, else the default. */
-  static boolean instrumentationOn(Function<String, String> config, String name) {
-    String specific = config.apply("otel.instrumentation." + name + ".enabled");
-    if (!specific.isEmpty()) return !"false".equalsIgnoreCase(specific);
-    return !"false".equalsIgnoreCase(config.apply("otel.instrumentation.common.default-enabled"));
+  /**
+   * Whether the agent's instrumentation module with those names is on, by the agent's own rule: with
+   * instrumentations on by default, any name set to false turns it off; with them off by default
+   * (otel.instrumentation.common.default-enabled=false), any name set to true turns it on.
+   */
+  static boolean instrumentationOn(Function<String, String> config, String... names) {
+    boolean defaultOn = !"false".equalsIgnoreCase(config.apply("otel.instrumentation.common.default-enabled"));
+    boolean on = defaultOn;
+    for (String name : names) {
+      String specific = config.apply("otel.instrumentation." + name + ".enabled");
+      boolean enabled = specific.isEmpty() ? defaultOn : !"false".equalsIgnoreCase(specific);
+      if (defaultOn) on &= enabled;
+      else on |= enabled;
+    }
+    return on;
   }
 
   /** True only when both are plain x.y.z versions and a is older than b. */
