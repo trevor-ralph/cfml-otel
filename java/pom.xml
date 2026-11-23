@@ -18,7 +18,7 @@
     <otel.sdk.version>${otel.api.version}</otel.sdk.version>
     <!-- opentelemetry-instrumentation-api, for otel.setRoute(): released with the javaagent, same version as build.sh
          AGENT_VERSION (tests/check-versions.sh). build.sh puts the jar in lib/. -->
-    <otel.instrumentation.version>2.33.1</otel.instrumentation.version>
+    <otel.instrumentation.version>2.34.0</otel.instrumentation.version>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
