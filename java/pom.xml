@@ -11,14 +11,14 @@
   <description>Thin static bridge so CFML engines call the OpenTelemetry API through its public interfaces.</description>
 
   <properties>
-    <!-- Keep at or below the OTel javaagent's bundled SDK version (agent 2.33.1 -> 1.67.0). -->
-    <otel.api.version>1.67.0</otel.api.version>
+    <!-- Keep at or below the OTel javaagent's bundled SDK version (agent 2.34.0 -> 1.68.0). -->
+    <otel.api.version>1.68.0</otel.api.version>
     <!-- The SDK fallback's jars. Normally the API version; the CI min-API check compiles the bridge against an older
          API with this left at the build's version (see .github/workflows/ci.yml). -->
     <otel.sdk.version>${otel.api.version}</otel.sdk.version>
     <!-- opentelemetry-instrumentation-api, for otel.setRoute(): released with the javaagent, same version as build.sh
          AGENT_VERSION (tests/check-versions.sh). build.sh puts the jar in lib/. -->
-    <otel.instrumentation.version>2.33.1</otel.instrumentation.version>
+    <otel.instrumentation.version>2.34.0</otel.instrumentation.version>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>

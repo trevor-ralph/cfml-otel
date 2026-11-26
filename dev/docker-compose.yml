@@ -10,6 +10,10 @@
 # from any folder name) and tests/integration (the pytest runner). Grafana: http://localhost:3000.
 #
 # x86-64 only: the ACF and SQL Server images. On ARM, run the Lucee engines with MSSQL=0 and --no-deps.
+#
+# The ACF images are pinned by digest as well as tag: Adobe re-pushes tags in place. The 2025.0.14 tag re-pushed
+# on 2026-11-26 downloads its cfpm "sqlserver" package at startup but never installs it ("restart required :0",
+# then "sqlserver package will not be deployed as it is not installed"), so every built-in-driver query fails.
 name: cfml-otel-dev
 
 # OTLP export settings; read by the javaagent and by cfml-otel's fallback SDK alike
@@ -90,7 +94,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   acf2025:
-    image: adobecoldfusion/coldfusion2025:2025.0.14
+    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:b17890d6cbf95154a48bf9b61712b2ba133257212d527c37c83e71c1a05c64ec
     depends_on: [lgtm]
     ports: ["8951:8500"]
     environment:
@@ -102,7 +106,7 @@ services:
   # ACF with the agent, but its HttpClient instrumentation off (as some ACF setups run, e.g. to match Lucee):
   # httpSpan() / http() must switch to creating the CLIENT span themselves ("span" mode)
   acf2025-nohttp:
-    image: adobecoldfusion/coldfusion2025:2025.0.14
+    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:b17890d6cbf95154a48bf9b61712b2ba133257212d527c37c83e71c1a05c64ec
     depends_on: [lgtm]
     ports: ["8953:8500"]
     environment:
@@ -112,7 +116,7 @@ services:
     volumes: ["..:/app/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   acf2023:
-    image: adobecoldfusion/coldfusion2023:2023.0.26
+    image: adobecoldfusion/coldfusion2023:2023.0.26@sha256:d95946c0beef3127ee5b0460cab2326125c0408dab2b62372b10527d6f980429
     depends_on: [lgtm]
     ports: ["8941:8500"]
     environment:
@@ -129,7 +133,7 @@ services:
   # oldest version the bridge supports: the apps load only cfml-otel's bridge jar (CFMLOTEL_BRIDGE_ONLY, read
   # by tests/app, tests/coldbox and tests/specs), the README's "Bridge-only install"
   acf2023-serverapi:
-    image: adobecoldfusion/coldfusion2023:2023.0.26
+    image: adobecoldfusion/coldfusion2023:2023.0.26@sha256:d95946c0beef3127ee5b0460cab2326125c0408dab2b62372b10527d6f980429
     depends_on: [lgtm]
     ports: ["8943:8500"]
     environment:
@@ -164,7 +168,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   acf2025-sdk:
-    image: adobecoldfusion/coldfusion2025:2025.0.14
+    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:b17890d6cbf95154a48bf9b61712b2ba133257212d527c37c83e71c1a05c64ec
     depends_on: [lgtm]
     ports: ["8952:8500"]
     environment:
@@ -184,7 +188,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   acf2023-sdk:
-    image: adobecoldfusion/coldfusion2023:2023.0.26
+    image: adobecoldfusion/coldfusion2023:2023.0.26@sha256:d95946c0beef3127ee5b0460cab2326125c0408dab2b62372b10527d6f980429
     depends_on: [lgtm]
     ports: ["8942:8500"]
     environment:

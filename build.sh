@@ -4,8 +4,8 @@
 # Needs only bash, curl and Docker (the bridge compiles inside a Maven container).
 set -euo pipefail
 
-AGENT_VERSION="${AGENT_VERSION:-2.33.1}"
-API_VERSION="${API_VERSION:-1.67.0}"   # keep <= the agent's bundled SDK version
+AGENT_VERSION="${AGENT_VERSION:-2.34.0}"
+API_VERSION="${API_VERSION:-1.68.0}"   # keep <= the agent's bundled SDK version
 MAVEN_IMAGE="${MAVEN_IMAGE:-maven:3.9.15-eclipse-temurin-21}"
 MVN="https://repo1.maven.org/maven2"
 ROOT="$(cd "$(dirname "$0")" && pwd)"

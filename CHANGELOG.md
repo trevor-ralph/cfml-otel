@@ -3,6 +3,12 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
+## [Unreleased]
+
+### Changed
+- Built and tested with OpenTelemetry javaagent 2.34.0 (was 2.33.1). The bundled API is now 1.68.0, the version
+  that agent is built on; the agent extension and `opentelemetry-instrumentation-api` move with it.
+
 ## [0.3.2] - 2026-11-10
 
 ### Changed
