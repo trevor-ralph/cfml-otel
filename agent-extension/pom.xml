@@ -14,7 +14,7 @@
   <properties>
     <!-- The javaagent this extension is built and tested against: build.sh AGENT_VERSION
          (tests/check-versions.sh). It reaches agent internals by name, so it is versioned with the agent. -->
-    <otel.instrumentation.version>2.33.1</otel.instrumentation.version>
+    <otel.instrumentation.version>2.34.0</otel.instrumentation.version>
     <!-- 8, not the bridge's 11: the advice is copied into the drivers' own (Java 8) class files, where code
          from a newer javac (invokedynamic string concatenation) isn't valid -->
     <maven.compiler.release>8</maven.compiler.release>

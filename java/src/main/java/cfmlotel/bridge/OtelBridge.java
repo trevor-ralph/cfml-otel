@@ -59,10 +59,10 @@ public final class OtelBridge {
   public static final String VERSION = "0.3.2";
 
   /** The javaagent release the integration tests run against (build.sh AGENT_VERSION). */
-  public static final String TESTED_AGENT_VERSION = "2.33.1";
+  public static final String TESTED_AGENT_VERSION = "2.34.0";
 
   /** The opentelemetry-api version lib/ ships (build.sh API_VERSION, pom.xml otel.api.version). */
-  public static final String BUNDLED_API_VERSION = "1.67.0";
+  public static final String BUNDLED_API_VERSION = "1.68.0";
 
   /**
    * The oldest opentelemetry-api the bridge works with, for servers that already have the API on their
