@@ -9,8 +9,8 @@ updates:
       actions:
         patterns: ["*"]
 
-  # The dev/CI stack's images (engines, SQL Server, Grafana LGTM, the Maven build image), pinned by tag and, for
-  # ACF, digest: a new tag or a re-pushed one arrives as a PR the full integration matrix has to pass.
+  # The dev/CI stack's images (engines, SQL Server, Grafana LGTM, the Maven build image), pinned by tag: a new tag
+  # arrives as a PR the full integration matrix has to pass.
   - package-ecosystem: docker-compose
     directory: /dev
     schedule:
