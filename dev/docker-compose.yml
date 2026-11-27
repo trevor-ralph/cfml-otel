@@ -11,9 +11,8 @@
 #
 # x86-64 only: the ACF and SQL Server images. On ARM, run the Lucee engines with MSSQL=0 and --no-deps.
 #
-# The ACF images are pinned by digest as well as tag: Adobe re-pushes tags in place. The 2025.0.14 tag re-pushed
-# on 2026-11-26 downloads its cfpm "sqlserver" package at startup but never installs it ("restart required :0",
-# then "sqlserver package will not be deployed as it is not installed"), so every built-in-driver query fails.
+# The ACF images are pinned by digest as well as tag, because Adobe re-pushes tags in place; Dependabot moves the
+# digest when a tag changes, so a re-pushed image arrives as a PR that CI has to pass.
 name: cfml-otel-dev
 
 # OTLP export settings; read by the javaagent and by cfml-otel's fallback SDK alike
@@ -42,15 +41,19 @@ x-acf-env: &acf-env
   acceptEULA: "YES"              # accepted by the user for local development (dev/trial edition)
   password: "dev-admin-only"     # local throwaway CF admin password
   enableSecureProfile: "false"
-  installModules: "sqlserver"    # ACF's built-in SQL Server driver (cfpm package, installed at startup)
+  # ACF's built-in SQL Server driver (the cfpm "sqlserver" package) is not installed here with installModules: the
+  # coldfusion2025:2025.0.14 image re-pushed on 2026-11-26 thinks it is at update level 0 and drops installed
+  # packages on every start ("sqlserver package will not be deployed as it is not installed"). The integration
+  # harness installs it into the running server instead (dev/acf-install-packages.cfm); for manual testing, open
+  # http://localhost:<port>/cfml-otel/dev/acf-install-packages.cfm after each start.
 
 services:
   lgtm:
-    image: grafana/otel-lgtm:0.40.0
+    image: grafana/otel-lgtm:0.41.1
     ports: ["3000:3000", "4317:4317", "4318:4318"]
 
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    image: mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04
     environment:
       ACCEPT_EULA: "Y"             # Microsoft SQL Server EULA, Developer edition (free for dev/test, not production)
       MSSQL_PID: "Developer"
@@ -63,7 +66,7 @@ services:
       start_period: 20s
 
   lucee8:
-    image: lucee/lucee:8.0.0.304
+    image: lucee/lucee:8.0.0.310
     depends_on: [lgtm]
     ports: ["8981:8888"]
     environment:
@@ -73,7 +76,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   lucee7:
-    image: lucee/lucee:7.1.2.191
+    image: lucee/lucee:7.1.2.195
     depends_on: [lgtm]
     ports: ["8971:8888"]
     environment:
@@ -94,7 +97,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
 
   acf2025:
-    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:b17890d6cbf95154a48bf9b61712b2ba133257212d527c37c83e71c1a05c64ec
+    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:cf1ef045ee1e157b942c07f33a9d38fa2b47615abc8d9efd6bcd4e7b6370b186
     depends_on: [lgtm]
     ports: ["8951:8500"]
     environment:
@@ -106,7 +109,7 @@ services:
   # ACF with the agent, but its HttpClient instrumentation off (as some ACF setups run, e.g. to match Lucee):
   # httpSpan() / http() must switch to creating the CLIENT span themselves ("span" mode)
   acf2025-nohttp:
-    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:b17890d6cbf95154a48bf9b61712b2ba133257212d527c37c83e71c1a05c64ec
+    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:cf1ef045ee1e157b942c07f33a9d38fa2b47615abc8d9efd6bcd4e7b6370b186
     depends_on: [lgtm]
     ports: ["8953:8500"]
     environment:
@@ -148,7 +151,7 @@ services:
 
   # ---- no javaagent: cfml-otel's own SDK (sdkFallback), configured by the same OTEL_* variables --------
   lucee8-sdk:
-    image: lucee/lucee:8.0.0.304
+    image: lucee/lucee:8.0.0.310
     depends_on: [lgtm]
     ports: ["8982:8888"]
     environment:
@@ -158,7 +161,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   lucee7-sdk:
-    image: lucee/lucee:7.1.2.191
+    image: lucee/lucee:7.1.2.195
     depends_on: [lgtm]
     ports: ["8972:8888"]
     environment:
@@ -168,7 +171,7 @@ services:
     volumes: ["..:/var/www/cfml-otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfmlotel-renamed:ro"]
 
   acf2025-sdk:
-    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:b17890d6cbf95154a48bf9b61712b2ba133257212d527c37c83e71c1a05c64ec
+    image: adobecoldfusion/coldfusion2025:2025.0.14@sha256:cf1ef045ee1e157b942c07f33a9d38fa2b47615abc8d9efd6bcd4e7b6370b186
     depends_on: [lgtm]
     ports: ["8952:8500"]
     environment:
@@ -201,7 +204,7 @@ services:
   # ---- tools: started only by `docker compose run --rm <name>` -------------------------------------
   build:
     profiles: ["tools"]
-    image: maven:3.9.15-eclipse-temurin-21
+    image: maven:3.10.2-eclipse-temurin-21
     working_dir: /src
     entrypoint: ["bash", "-c", "./build.sh && bash dev/fetch-test-deps.sh"]
     volumes: ["..:/src", "m2:/root/.m2"]

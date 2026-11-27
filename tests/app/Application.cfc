@@ -31,7 +31,7 @@ component {
         };
         // Lucee 8's bundled SQL Server extension loads the driver from Maven; its old OSGi bundle no longer resolves
         if (val(listFirst(server.lucee.version, ".")) >= 8) {
-            this.datasources["cfmlotel_mssql"]["maven"] = "com.microsoft.sqlserver:mssql-jdbc:13.4.0.jre11";
+            this.datasources["cfmlotel_mssql"]["maven"] = "com.microsoft.sqlserver:mssql-jdbc:13.6.3.jre11";
         } else {
             this.datasources["cfmlotel_mssql"]["bundleName"] = "org.lucee.mssql";
         }

@@ -1,5 +1,5 @@
 # Integration-test runner: `docker compose run --rm tests` from dev/ (see dev/docker-compose.yml).
-FROM python:3.13.18-slim-bookworm
+FROM python:3.15.2-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /tests

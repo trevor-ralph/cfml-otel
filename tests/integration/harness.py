@@ -109,9 +109,9 @@ def traceparent(trace_id: str, parent_id: str) -> dict:
 
 # ---- Readiness ------------------------------------------------------------------------------------
 
-def _ok(url: str) -> bool:
+def _ok(url: str, timeout: int = 10) -> bool:
     try:
-        return http(url, timeout=10)[0] == 200
+        return http(url, timeout=timeout)[0] == 200
     except (urllib.error.URLError, socket.timeout, ConnectionError, OSError):
         return False
 
@@ -138,8 +138,11 @@ def wait_until_ready(targets: list[Target]) -> None:
         wait(f"grafana datasource {ds}", f"{GRAFANA}/api/datasources/name/{ds}", 0)
     for t in targets:
         wait(t.name, f"{t.base}/cfml-otel/tests/app/check.cfm", 60 if t.is_acf else 15)
-        # ACF can answer before its cfpm "sqlserver" package has finished installing
+        # ACF's cfpm "sqlserver" package goes into the running server (dev/acf-install-packages.cfm explains why),
+        # then the database tests wait until a query through the built-in driver succeeds
         if t.is_acf and t.db:
+            if not _ok(f"{t.base}/cfml-otel/tests/app/ready-db.cfm"):
+                _ok(f"{t.base}/cfml-otel/dev/acf-install-packages.cfm", timeout=360)
             wait(f"{t.name} SQL Server driver", f"{t.base}/cfml-otel/tests/app/ready-db.cfm", 0)
 
 

@@ -36,16 +36,16 @@ jobs:
           - { engine: acf2025-nohttp, arch: x64, runner: ubuntu-latest, mssql: "0" }
           # ACF with an older opentelemetry-api (1.38.0) in cfusion/lib and only the bridge jar loaded (bridge-only install)
           - { engine: acf2023-serverapi, arch: x64, runner: ubuntu-latest, mssql: "0" }
-          - { engine: lucee8,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
-          - { engine: lucee7,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
-          - { engine: lucee6,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
+          - { engine: lucee8,  arch: arm64, runner: ubuntu-26.04-arm, mssql: "0" }
+          - { engine: lucee7,  arch: arm64, runner: ubuntu-26.04-arm, mssql: "0" }
+          - { engine: lucee6,  arch: arm64, runner: ubuntu-26.04-arm, mssql: "0" }
           # No javaagent: cfml-otel's own SDK (sdkFallback); no JDBC tracing, so no SQL Server
           - { engine: lucee8-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: lucee7-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: lucee6-sdk,  arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: acf2025-sdk, arch: x64,   runner: ubuntu-latest,    mssql: "0" }
           - { engine: acf2023-sdk, arch: x64,   runner: ubuntu-latest,    mssql: "0" }
-          - { engine: lucee7-sdk,  arch: arm64, runner: ubuntu-24.04-arm, mssql: "0" }
+          - { engine: lucee7-sdk,  arch: arm64, runner: ubuntu-26.04-arm, mssql: "0" }
     env:
       ENGINES: ${{ matrix.engine }}
       MSSQL: ${{ matrix.mssql }}
@@ -102,5 +102,5 @@ jobs:
           sdk="$(sed -n 's:.*<otel.api.version>\(.*\)</otel.api.version>.*:\1:p' java/pom.xml | head -1)"
           [[ -n "$min" && -n "$sdk" ]] || { echo "could not read the API versions" >&2; exit 1; }
           echo "opentelemetry-api $min (the SDK fallback's classes against SDK $sdk)"
-          docker run --rm -v "$PWD/java:/src" -w /src maven:3.9.15-eclipse-temurin-21 \
+          docker run --rm -v "$PWD/java:/src" -w /src maven:3.10.2-eclipse-temurin-21 \
             mvn -B -q -C -Dotel.api.version="$min" -Dotel.sdk.version="$sdk" compile
