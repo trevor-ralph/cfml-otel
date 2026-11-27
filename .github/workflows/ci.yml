@@ -102,5 +102,7 @@ jobs:
           sdk="$(sed -n 's:.*<otel.api.version>\(.*\)</otel.api.version>.*:\1:p' java/pom.xml | head -1)"
           [[ -n "$min" && -n "$sdk" ]] || { echo "could not read the API versions" >&2; exit 1; }
           echo "opentelemetry-api $min (the SDK fallback's classes against SDK $sdk)"
-          docker run --rm -v "$PWD/java:/src" -w /src maven:3.9.16-eclipse-temurin-21 \
+          maven="$(sed -n 's/^ *image: *\(maven:.*\)$/\1/p' dev/docker-compose.yml)"   # the build service's image
+          [[ -n "$maven" ]] || { echo "could not read the Maven image from dev/docker-compose.yml" >&2; exit 1; }
+          docker run --rm -v "$PWD/java:/src" -w /src "$maven" \
             mvn -B -q -C -Dotel.api.version="$min" -Dotel.sdk.version="$sdk" compile
