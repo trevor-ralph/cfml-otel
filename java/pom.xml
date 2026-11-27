@@ -4,13 +4,43 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>cfmlotel</groupId>
+  <!-- io.github.trevor-ralph: the Maven Central namespace verified for this GitHub account -->
+  <groupId>io.github.trevor-ralph</groupId>
   <artifactId>cfml-otel-bridge</artifactId>
   <version>0.3.3</version>
   <packaging>jar</packaging>
+  <name>cfml-otel bridge</name>
   <description>Thin static bridge so CFML engines call the OpenTelemetry API through its public interfaces.</description>
+  <url>https://github.com/trevor-ralph/cfml-otel</url>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <id>trevor-ralph</id>
+      <name>Trevor Ralph</name>
+      <url>https://github.com/trevor-ralph</url>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://github.com/trevor-ralph/cfml-otel.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/trevor-ralph/cfml-otel.git</developerConnection>
+    <url>https://github.com/trevor-ralph/cfml-otel</url>
+  </scm>
+  <issueManagement>
+    <system>GitHub</system>
+    <url>https://github.com/trevor-ralph/cfml-otel/issues</url>
+  </issueManagement>
 
   <properties>
+    <!-- A fixed timestamp for the jar entries makes the build reproducible: the same commit built in the same image
+         gives byte-identical jars, so the Maven Central upload can be checked against the release zip -->
+    <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>
     <!-- Keep at or below the OTel javaagent's bundled SDK version (agent 2.34.0 -> 1.68.0). -->
     <otel.api.version>1.68.0</otel.api.version>
     <!-- The SDK fallback's jars. Normally the API version; the CI min-API check compiles the bridge against an older
@@ -114,4 +144,73 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Maven Central (dev/maven-central-publish.sh, run by release.yml): sources and javadoc jars, signatures, upload.
+         Keep in step with agent-extension/pom.xml's copy. -->
+    <profile>
+      <id>central</id>
+      <properties>
+        <central.skipUpload>false</central.skipUpload>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.4.0</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals><goal>jar-no-fork</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.12.0</version>
+            <configuration>
+              <doclint>none</doclint>
+              <quiet>true</quiet>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals><goal>jar</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <!-- Bouncy Castle signer: the key comes from MAVEN_GPG_KEY and MAVEN_GPG_PASSPHRASE, no gpg install -->
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <configuration>
+              <signer>bc</signer>
+            </configuration>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.12.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+              <skipUpload>${central.skipUpload}</skipUpload>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

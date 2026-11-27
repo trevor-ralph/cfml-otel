@@ -1,6 +1,7 @@
 # On a v* tag: builds lib/, packages the module zip, publishes SHA-256 checksums and a signed
-# build-provenance attestation, creates the GitHub release, and publishes it to ForgeBox (needs the
-# FORGEBOX_API_TOKEN secret in the "forgebox" environment; without it the ForgeBox job only warns).
+# build-provenance attestation, creates the GitHub release, then publishes it to ForgeBox and the jars to Maven
+# Central. Each publish job runs in its own environment ("forgebox", "maven-central") that holds its secrets;
+# without them the job only warns.
 # Only commits on main are released.
 # Verify a download with: gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 name: Release
@@ -38,8 +39,12 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
 
+      # In the pinned build image (docker-compose.yml's build service), like CI: with the poms' fixed
+      # project.build.outputTimestamp the jars are reproducible, and the maven-central job checks it uploads these
+      # exact jars
       - name: Build lib/
-        run: ./build.sh
+        working-directory: dev
+        run: docker compose run --rm --quiet-pull --entrypoint ./build.sh build
 
       - name: Package
         run: |
@@ -97,3 +102,37 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           FORGEBOX_API_TOKEN: ${{ secrets.FORGEBOX_API_TOKEN }}
+
+  # Maven Central gets the bridge and the agent extension as io.github.trevor-ralph:cfml-otel-bridge and
+  # :cfml-otel-agent-extension (dev/maven-central-publish.sh): rebuilt in the same image, compared byte for byte with
+  # the jars in the release zip, then signed and uploaded. Central releases are permanent, so pre-releases stay on
+  # GitHub. Read-only, in the "maven-central" environment, which holds the Central Portal token and the signing key
+  # and only admits v* tags.
+  maven-central:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45     # the plugin waits for Central to finish publishing (up to 30 minutes)
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish to Maven Central
+        working-directory: dev
+        run: |
+          if [[ -z "$MAVEN_CENTRAL_USERNAME" || -z "$MAVEN_CENTRAL_PASSWORD" || -z "$MAVEN_GPG_KEY" || -z "$MAVEN_GPG_PASSPHRASE" ]]; then
+            echo "::warning::The maven-central environment is missing a secret (MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD, MAVEN_GPG_KEY, MAVEN_GPG_PASSPHRASE), so this release wasn't published to Maven Central."
+            exit 0
+          fi
+          docker compose run --rm --quiet-pull -e TAG -e MAVEN_CENTRAL_USERNAME -e MAVEN_CENTRAL_PASSWORD \
+            -e MAVEN_GPG_KEY -e MAVEN_GPG_PASSPHRASE --entrypoint bash build dev/maven-central-publish.sh
+        env:
+          TAG: ${{ github.ref_name }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          MAVEN_GPG_KEY: ${{ secrets.MAVEN_GPG_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
