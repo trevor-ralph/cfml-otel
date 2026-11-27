@@ -4,8 +4,9 @@
 #     bumping COLDBOX_VERSION, set COLDBOX_SHA256 to the new zip's hash (Ortus publishes .md5 / .sha512).
 #   - TestBox (+ its globber dependency), for the CFML unit specs in tests/specs: dev/testbox/ (mounted at
 #     /opt/testbox). Pinned by SHA-256 like ColdBox.
-#   - Microsoft's JDBC driver for SQL Server, for ACF's "Other" datasource: dev/jdbc/mssql-jdbc.jar
-#     (mounted into ACF's server lib folder). Verified against Maven Central's SHA-1, like build.sh.
+#   - Microsoft's JDBC driver for SQL Server, jar and .pom, in dev/jdbc/: mounted into ACF's server lib folder (its
+#     "Other" datasource) and into Lucee 8's Maven folder (its datasource). Verified against Maven Central's SHA-1,
+#     like build.sh.
 #   - opentelemetry-api/-context at the bridge's oldest supported version, and opentelemetry-instrumentation-api at
 #     the agent's version, for the acf2023-serverapi engine: dev/serverapi/ (mounted into ACF's cfusion/lib).
 #     SHA-1 verified like the JDBC driver.
@@ -56,18 +57,22 @@ fi
 # --- Microsoft JDBC driver for SQL Server: ACF's "Other" datasource (README "Database queries") -----------
 dest="$ROOT/dev/jdbc"
 mkdir -p "$dest"
-if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$MSSQL_JDBC_VERSION" && -f "$dest/mssql-jdbc.jar" ]]; then
+# The .pom too: docker-compose.yml mounts both into Lucee 8's Maven folder, so the Lucee 8 datasource (which names
+# the driver by Maven coordinates) finds it there instead of downloading it from Maven Central at runtime.
+if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$MSSQL_JDBC_VERSION" && -f "$dest/mssql-jdbc.jar" && -f "$dest/mssql-jdbc.pom" ]]; then
   echo "mssql-jdbc $MSSQL_JDBC_VERSION already in dev/jdbc"
 else
-  url="https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/$MSSQL_JDBC_VERSION/mssql-jdbc-$MSSQL_JDBC_VERSION.jar"
-  echo "fetching $url"
-  "${CURL[@]}" "$url" -o "$tmp/mssql-jdbc.jar"
-  want="$("${CURL[@]}" "$url.sha1" | cut -c1-40)"
-  got="$(sha1sum "$tmp/mssql-jdbc.jar" | cut -c1-40)"
-  [[ "$want" == "$got" ]] || { echo "SHA-1 mismatch for $url" >&2; exit 1; }
-  mv "$tmp/mssql-jdbc.jar" "$dest/mssql-jdbc.jar"
+  for ext in jar pom; do
+    url="https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/$MSSQL_JDBC_VERSION/mssql-jdbc-$MSSQL_JDBC_VERSION.$ext"
+    echo "fetching $url"
+    "${CURL[@]}" "$url" -o "$tmp/mssql-jdbc.$ext"
+    want="$("${CURL[@]}" "$url.sha1" | cut -c1-40)"
+    got="$(sha1sum "$tmp/mssql-jdbc.$ext" | cut -c1-40)"
+    [[ "$want" == "$got" ]] || { echo "SHA-1 mismatch for $url" >&2; exit 1; }
+    mv "$tmp/mssql-jdbc.$ext" "$dest/mssql-jdbc.$ext"
+  done
   echo "$MSSQL_JDBC_VERSION" > "$dest/.version"
-  echo "mssql-jdbc $MSSQL_JDBC_VERSION -> dev/jdbc/mssql-jdbc.jar"
+  echo "mssql-jdbc $MSSQL_JDBC_VERSION -> dev/jdbc/mssql-jdbc.jar, .pom"
 fi
 
 # --- An older opentelemetry-api for the acf2023-serverapi engine ------------------------------------------
