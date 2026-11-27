@@ -9,6 +9,8 @@ release notes.
 - Installing from Maven Central without CommandBox: `docs/maven/pom.xml` assembles the whole `lib/` folder (all 16 jars,
   byte-identical to the release zip's for 0.3.4), and the README shows the dependencies a Java build adds, since the
   bridge's OpenTelemetry dependencies are `provided` and don't come with it.
+- SECURITY.md covers verifying the Maven Central jars (signing key fingerprint) and ForgeBox installs; the README's
+  release notes describe the ForgeBox and Maven Central publishing and which local build is reproducible.
 
 ## [0.3.4] - 2026-11-27
 

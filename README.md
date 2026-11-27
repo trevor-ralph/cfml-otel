@@ -126,7 +126,9 @@ docker compose -f dev/docker-compose.yml run --rm build    # any OS, only Docker
 This fetches `opentelemetry-api`, `-context`, `-common` and `opentelemetry-instrumentation-api` (SHA-1 verified,
 from Maven Central) and compiles the bridge and the agent extension with Maven, in a container, so no local JDK is
 needed. Maven also puts the SDK fallback's jars in `lib/sdk/` (checksum-verified). It also downloads the
-javaagent into `dev/agent/` for the dev stack.
+javaagent into `dev/agent/` for the dev stack. The first command builds in the same pinned Maven image as CI and the
+releases, so its jars are byte-identical to a release's for the same commit (on a Linux checkout; a Windows-mounted one
+differs in file-permission bits only). `./build.sh` with a local Maven builds working jars with your own JDK.
 
 **Version rule:** the API jars must be **≤ the agent's bundled SDK version**. Agent 2.34.0 bundles SDK 1.68.0,
 which is the default. Override with `AGENT_VERSION=… API_VERSION=… ./build.sh`.
@@ -866,8 +868,12 @@ engines without SQL Server: `MSSQL=0 docker compose run --rm --no-deps tests` wi
 agent, without it, ACF with the agent's HttpClient instrumentation off, and the bridge-only install), plus Lucee on
 GitHub's ARM runners, and a job that compiles the bridge against the oldest supported OTel API (1.38.0). One build
 job makes `lib/` and fetches the test dependencies first, and the engine jobs reuse its output.
-Pushing a `v*` tag that matches `box.json`'s version runs [release.yml](.github/workflows/release.yml), which
-builds and publishes the release zip, with the version's [CHANGELOG.md](CHANGELOG.md) section as the notes.
+Pushing a `v*` tag that matches `box.json`'s version, on a commit on main, runs
+[release.yml](.github/workflows/release.yml): it builds `lib/` in the pinned build image and publishes the release zip
+with `SHA256SUMS`, a provenance attestation and the version's [CHANGELOG.md](CHANGELOG.md) section as the notes. Then
+two jobs publish it: to ForgeBox (pointing at that zip) and to Maven Central (the two jars, checked byte for byte against
+the zip's, then signed). Each runs in its own GitHub environment that holds its credentials, admits only `v*` tags,
+and waits for the maintainer's approval; pre-releases (tags with a `-`) stay on GitHub.
 GitHub's CodeQL code scanning (default setup) analyses the Java bridge, the Python test harness and the
 workflows; CodeQL has no CFML support.
 
