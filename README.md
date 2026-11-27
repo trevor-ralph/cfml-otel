@@ -67,9 +67,9 @@ docker compose -f dev/docker-compose.yml run --rm build    # any OS, only Docker
 ./build.sh                                                  # or directly on Linux / macOS / Git Bash
 ```
 
-This fetches `opentelemetry-api`, `-context` and `-common` (SHA-1 verified, from Maven Central) and
-compiles the bridge with Maven, in a container, so no local JDK is needed. Maven also puts the SDK
-fallback's jars in `lib/sdk/` (checksum-verified). It also downloads the
+This fetches `opentelemetry-api`, `-context`, `-common` and `opentelemetry-instrumentation-api` (SHA-1 verified,
+from Maven Central) and compiles the bridge and the agent extension with Maven, in a container, so no local JDK is
+needed. Maven also puts the SDK fallback's jars in `lib/sdk/` (checksum-verified). It also downloads the
 javaagent into `dev/agent/` for the dev stack.
 
 **Version rule:** the API jars must be **≤ the agent's bundled SDK version**. Agent 2.34.0 bundles SDK 1.68.0,
@@ -220,7 +220,7 @@ Tested with a second application that has no mapping and no jars ([tests/shared]
 
 #### ColdBox
 
-Integration-tested with ColdBox 8.3 on all four engines, with and without the agent ([tests/coldbox](tests/coldbox)).
+Integration-tested with ColdBox 8.3 on every engine, with and without the agent ([tests/coldbox](tests/coldbox)).
 
 `box install` the module, then still add `modules/cfml-otel/lib/` to `this.javaSettings.loadPaths`.
 ColdBox can't change the classpath for you. Configure it in `config/Coldbox.cfc` under `moduleSettings["cfmlotel"]`
@@ -396,7 +396,7 @@ application.otel.setRoute("orders.checkout");
 - **With the agent** this renames the agent's SERVER span (`GET orders.checkout`) and sets `http.route` on it
   **and** on `http.server.request.duration`, so request rates and latencies split by route. It goes through the
   agent's own route mechanism (OpenTelemetry's `opentelemetry-instrumentation-api`, which `lib/` ships and the
-  agent bridges); tested on all four engines.
+  agent bridges); tested on every engine.
 - **With the SDK fallback** it does the same on cfml-otel's SERVER span (the fallback records no HTTP metrics).
 - Use a low-cardinality name that identifies the handler, never one with IDs or other per-request values.
 - The first call in a request wins; a later call only replaces it with a longer route (the agent's rule). An
@@ -482,7 +482,7 @@ The span follows the stable HTTP semantic conventions:
 In `agent` mode the agent's span is used as it is: the `span` argument is a no-op, and `urlTemplate`, `name` and
 `attributes` are ignored. Put attributes you need on every engine on an enclosing `otel.span()`.
 
-Tested on all four engines: GET/POST with headers and body, 404, connection failure, and that the downstream
+Tested on every engine: GET/POST with headers and body, 404, connection failure, and that the downstream
 request continues the trace from the client span. CI also runs ACF 2025 with the agent's HttpClient
 instrumentation off, which covers `span` mode on ACF.
 
@@ -567,7 +567,7 @@ outbound HTTP, JVM, Tomcat, your own metrics, traces and logs.
 
 **`cflog` and `writeLog` need nothing from cfml-otel.** Both engines log through log4j2, and the agent
 captures log4j2 by default, so every `cflog` / `writeLog` reaches your logs backend with its severity and
-the current `trace_id` / `span_id` (tested on all four engines). The logger name (`scope_name` in Loki) is
+the current `trace_id` / `span_id` (tested on every engine). The logger name (`scope_name` in Loki) is
 the log file: `coldfusion.user.<file>` on ACF, `server.cflog.<file>…` on Lucee. Lucee's `application` log
 only records errors by default (`loggers.application.level` in `.CFConfig.json`), so lower writes to it
 are dropped before the agent sees them. Lucee 6 prefixes the message with `<app name>->`.
@@ -595,7 +595,7 @@ Tomcat's startup and connector logs, and cfml-otel's own `cfml-otel` warnings. T
   ```
 
 **LogBox (ColdBox):** its file appenders write files directly, so the agent doesn't see them. LogBox's
-`CFAppender` logs through `cflog`, so its output is captured, with the trace ID (tested on all four engines).
+`CFAppender` logs through `cflog`, so its output is captured, with the trace ID (tested on every engine).
 
 ## Performance
 
@@ -607,8 +607,8 @@ Treat these as orders of magnitude, not a promise for your servers.
   0.026 ms per query and 0.016 ms per span. On those tiny pages, throughput dropped 6-9% for plain CFML and 14-19%
   for a page with 10 queries, on both engines. On a page that takes 50-200 ms it's a percent or two.
 - **Memory:** about 80 MB more on Lucee; more on ACF, where the measurement was noisy.
-- **Startup:** a few seconds more on Lucee; on ACF an estimated 25 s more per JVM start (the Docker image restarts
-  ColdFusion several times while starting, so it couldn't be timed cleanly).
+- **Startup:** a few seconds more on Lucee; on ACF an estimated 25 s more per JVM start (in the benchmark setup the
+  Docker image restarted ColdFusion several times while starting, so it couldn't be timed cleanly).
 - **Sampling** (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, `OTEL_TRACES_SAMPLER_ARG=0.1`) mostly cuts export
   volume and backend storage. The agent still instruments every call, so CPU barely changes; the 10-query page on
   ACF got back about 40% of its overhead.
@@ -794,7 +794,8 @@ Known engine behaviour is reported as `xfail`, not hidden:
 - Lucee 6, the LDEV-6519 control, gets the wrong `traceparent` on `cfhttp`.
 - Without the agent: `runAsync` loses the trace, and `cflog` isn't captured.
 
-The runner waits for each engine itself, including ACF's first-boot restart, and writes `junit.xml` and
+The runner waits for each engine itself (ACF only counts as ready once it has answered for a minute, and once
+its SQL Server package is in place), and writes `junit.xml` and
 the raw scenario responses to `tests/results/`. Grafana is at http://localhost:3000.
 
 Licences accepted by the dev stack, for development and testing only:

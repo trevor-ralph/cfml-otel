@@ -6,8 +6,9 @@
 #     /opt/testbox). Pinned by SHA-256 like ColdBox.
 #   - Microsoft's JDBC driver for SQL Server, for ACF's "Other" datasource: dev/jdbc/mssql-jdbc.jar
 #     (mounted into ACF's server lib folder). Verified against Maven Central's SHA-1, like build.sh.
-#   - opentelemetry-api/-context at the bridge's oldest supported version, for the acf2023-serverapi engine:
-#     dev/serverapi/ (mounted into ACF's cfusion/lib). SHA-1 verified like the JDBC driver.
+#   - opentelemetry-api/-context at the bridge's oldest supported version, and opentelemetry-instrumentation-api at
+#     the agent's version, for the acf2023-serverapi engine: dev/serverapi/ (mounted into ACF's cfusion/lib).
+#     SHA-1 verified like the JDBC driver.
 # Runs on the host (bash + curl) or in the build container (`docker compose run --rm build`).
 set -euo pipefail
 
