@@ -20,6 +20,12 @@ updates:
       # service, added by hand.
       - dependency-name: "lucee/lucee"
         update-types: ["version-update:semver-major"]
+      # The build image stays on a supported JDK: 25 (LTS) rather than 26, which reached end of life when 27 came
+      # out. Dependabot has moved the JDK in the tag before (21 to 26), so the JDK 26 tags are listed.
+      # JDK 27 images only exist for Maven 3.10, which has no arm64 build yet; that PR's Arm jobs would fail.
+      - dependency-name: "maven"
+        versions: ["3-eclipse-temurin-26", "3.9-eclipse-temurin-26", "3.9.15-eclipse-temurin-26",
+                   "3.9.16-eclipse-temurin-26", "3.10-eclipse-temurin-26", "3.10.0-eclipse-temurin-26"]
 
   # The integration-test runner's base image and its hash-pinned pytest requirements
   - package-ecosystem: docker
