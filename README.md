@@ -68,6 +68,18 @@ gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 
 Both are the same file: the ForgeBox entry points CommandBox at the release's zip on GitHub.
 
+**The two jars are also on Maven Central** (0.3.4 and later), for builds and tools that fetch jars by coordinates,
+such as provisioning the agent extension next to the javaagent:
+
+```
+io.github.trevor-ralph:cfml-otel-bridge:<version>
+io.github.trevor-ralph:cfml-otel-agent-extension:<version>
+```
+
+They're byte-identical to the jars in the release zip: the build is reproducible, and the release workflow checks it
+before uploading. The bridge's OpenTelemetry dependencies are `provided`, so Maven doesn't pull them in; a CFML app
+still needs the zip's (or ForgeBox's) `lib/`, which has them.
+
 **From source:**
 
 ```bash
