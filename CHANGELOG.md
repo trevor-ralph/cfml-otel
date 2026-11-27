@@ -3,7 +3,7 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
-## [Unreleased]
+## [0.3.3] - 2026-11-27
 
 ### Added
 - Published to [ForgeBox](https://forgebox.io/view/cfml-otel): `box install cfml-otel`. The ForgeBox entry points
@@ -12,6 +12,8 @@ release notes.
 ### Changed
 - Built and tested with OpenTelemetry javaagent 2.34.0 (was 2.33.1). The bundled API is now 1.68.0, the version
   that agent is built on; the agent extension and `opentelemetry-instrumentation-api` move with it.
+- Tested on the latest of every engine: Lucee 8.0.0.310, 7.1.2.195 and 6.2.9.4, and ACF 2025.0.14 and 2023.0.26
+  as Adobe re-pushed them on 2026-11-26 and 27, with SQL Server 2022 CU28. No code changes were needed.
 
 ### Documented
 - NOTICE lists every bundled third-party jar: `opentelemetry-instrumentation-api` and the SDK fallback's jars in
