@@ -117,8 +117,9 @@ def _ok(url: str) -> bool:
 
 
 def wait_until_ready(targets: list[Target]) -> None:
-    """Grafana's datasources, then each engine. ACF restarts itself once during first-boot setup, so an
-    engine only counts as ready after answering continuously for a while, not on its first 200."""
+    """Grafana's datasources, then each engine. ACF's first-boot setup restarts ColdFusion when a setting it
+    applies needs that, so an ACF engine only counts as ready after answering continuously for a while, not on its
+    first 200."""
     def wait(label: str, url: str, stable: int) -> None:
         start, ok_since = time.monotonic(), None
         while True:

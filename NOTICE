@@ -7,11 +7,25 @@ Third-party software
 --------------------
 
 Release archives of this project (not the source repository) include the following unmodified
-libraries in lib/, each licensed under the Apache License, Version 2.0:
+libraries, each licensed under the Apache License, Version 2.0 and Copyright The OpenTelemetry Authors.
+Neither upstream project has a NOTICE file of its own.
 
-  opentelemetry-api, opentelemetry-context, opentelemetry-common
-  Copyright The OpenTelemetry Authors
-  https://github.com/open-telemetry/opentelemetry-java
+  In lib/:
+    opentelemetry-api, opentelemetry-context, opentelemetry-common
+    https://github.com/open-telemetry/opentelemetry-java
+
+    opentelemetry-instrumentation-api
+    https://github.com/open-telemetry/opentelemetry-java-instrumentation
+
+  In lib/sdk/ (the optional SDK fallback):
+    opentelemetry-sdk, opentelemetry-sdk-common, opentelemetry-sdk-trace, opentelemetry-sdk-metrics,
+    opentelemetry-sdk-logs, opentelemetry-sdk-extension-autoconfigure,
+    opentelemetry-sdk-extension-autoconfigure-spi, opentelemetry-exporter-common,
+    opentelemetry-exporter-otlp, opentelemetry-exporter-otlp-common
+    https://github.com/open-telemetry/opentelemetry-java
+
+The other jars in lib/ (cfml-otel-bridge, and lib/agent/cfml-otel-agent-extension) are built from this
+repository's java/ and agent-extension/ sources, under this project's license.
 
 Trademarks
 ----------

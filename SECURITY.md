@@ -25,8 +25,9 @@ sha256sum -c SHA256SUMS
 
 ## Scope notes
 
-- cfml-otel never sends telemetry anywhere itself. Export is done by the OpenTelemetry javaagent,
-  configured with the standard `OTEL_*` settings. Keep exporter endpoints and headers (API keys) in
-  the environment, not in code.
+- cfml-otel only sends telemetry where the standard `OTEL_*` settings point. With the OpenTelemetry
+  javaagent, the agent does the export. With the opt-in SDK fallback (`sdkFallback`), cfml-otel's own
+  OTLP/HTTP exporter does, to the endpoint those settings name (by default `http://localhost:4318`, as
+  with the agent). Keep exporter endpoints and headers (API keys) in the environment, not in code.
 - Span attributes, events and log records are exported as given. Don't put secrets or personal data
   in them; recorded exceptions include messages and stack traces.

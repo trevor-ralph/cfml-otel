@@ -9,6 +9,15 @@ release notes.
 - Built and tested with OpenTelemetry javaagent 2.34.0 (was 2.33.1). The bundled API is now 1.68.0, the version
   that agent is built on; the agent extension and `opentelemetry-instrumentation-api` move with it.
 
+### Documented
+- NOTICE lists every bundled third-party jar: `opentelemetry-instrumentation-api` and the SDK fallback's jars in
+  `lib/sdk/` were missing (all Apache-2.0, unmodified). The README's acknowledgement says the same, and gives the
+  right count for `lib/sdk/` (10 jars, not 11).
+- SECURITY.md no longer says cfml-otel never exports anything itself: with the SDK fallback, its own exporter
+  sends to the configured OTLP endpoint.
+- The README says "every engine" where it said "all four" (Lucee 8 made it five), and lists every jar the build
+  fetches. The ColdBox module's `ModuleConfig.cfc` names its author, as `box.json` does.
+
 ## [0.3.2] - 2026-11-10
 
 ### Changed

@@ -5,8 +5,9 @@
 #
 # Why not the image's installModules: the coldfusion2025:2025.0.14 image re-pushed on 2026-11-26 believes it is at
 # update level 0 and drops installed packages whenever ColdFusion starts ("sqlserver package will not be deployed
-# as it is not installed"), so a package only stays in if it goes in after the last start. This runs on every
-# container start, so a `docker compose restart` gets it back too. Installing an installed package is harmless.
+# as it is not installed"), so a package only stays in if it goes in after the last start. The coldfusion2023:2023.0.26
+# image re-pushed on 2026-11-27 is at update level 0 too. This runs on every container start, so a
+# `docker compose restart` gets the package back. Installing an installed package is harmless.
 
 install_packages() {
     # First boot: the startup script restarts ColdFusion at most once, then writes disableScripts. Later boots:
