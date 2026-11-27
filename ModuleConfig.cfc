@@ -9,7 +9,7 @@ component {
     this.title = "cfml-otel";
     this.author = "Trevor Ralph";
     this.description = "OpenTelemetry for CFML (Lucee + Adobe ColdFusion), on top of the OTel javaagent";
-    this.version = "0.3.3";
+    this.version = "0.3.4";
     this.cfmapping = "cfmlotel";
     this.modelNamespace = "cfmlotel";
     this.autoMapModels = false;

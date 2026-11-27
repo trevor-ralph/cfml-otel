@@ -3,7 +3,7 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
-## [Unreleased]
+## [0.3.4] - 2026-11-27
 
 ### Added
 - The bridge and the agent extension are published to Maven Central as `io.github.trevor-ralph:cfml-otel-bridge` and
@@ -13,6 +13,10 @@ release notes.
 
 ### Changed
 - The Maven groupId is `io.github.trevor-ralph` (was `cfmlotel`). Java package names are unchanged.
+
+### Fixed
+- Links on the ForgeBox page to files in the repository (LICENSE, tests, docs, the workflows) now go to GitHub at
+  the release's tag; on the 0.3.3 page they led nowhere.
 
 ## [0.3.3] - 2026-11-27
 
