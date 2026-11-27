@@ -12,7 +12,7 @@ attributes, metrics, OTel logs correlated with the trace, and context propagatio
 OTLP to a Collector / Grafana Alloy and on to Tempo, Loki and Mimir/Prometheus (or any OTLP backend).
 
 > Status: **0.3.2**. Integration-tested (plain CFML, ColdBox 8.3, SQL Server 2022) on Lucee 8.0.0, Lucee 7.1.2,
-> Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26, with agent 2.33.1 and without any agent
+> Lucee 6.2.9, ACF 2025.0.14 and ACF 2023.0.26, with agent 2.34.0 and without any agent
 > ([SDK fallback](#without-the-javaagent-sdk-fallback)) — see [Testing](#testing).
 
 > **On ACF, also load cfml-otel's agent extension** (`lib/agent/cfml-otel-agent-extension.jar`, see
@@ -72,7 +72,7 @@ compiles the bridge with Maven, in a container, so no local JDK is needed. Maven
 fallback's jars in `lib/sdk/` (checksum-verified). It also downloads the
 javaagent into `dev/agent/` for the dev stack.
 
-**Version rule:** the API jars must be **≤ the agent's bundled SDK version**. Agent 2.33.1 bundles SDK 1.67.0,
+**Version rule:** the API jars must be **≤ the agent's bundled SDK version**. Agent 2.34.0 bundles SDK 1.68.0,
 which is the default. Override with `AGENT_VERSION=… API_VERSION=… ./build.sh`.
 
 #### Bridge-only install (the server already has OpenTelemetry jars)
@@ -92,7 +92,7 @@ For [`setRoute()`](#request-names-routes), also put `lib/opentelemetry-instrumen
 takes routes when both are loaded by the same class loader. Shops that manage `cfusion/lib` with a build tool can
 put the bridge jar there too instead of in `loadPaths`.
 
-The server's API must be **1.38.0 or later** (the bridge is compiled against 1.67.0 and CI checks it against
+The server's API must be **1.38.0 or later** (the bridge is compiled against 1.68.0 and CI checks it against
 1.38.0, which added the synchronous gauges), and no newer than the version the agent bundles.
 [Startup checks](#startup-checks) tell you which API is in use and where it came from:
 `SERVER_OTEL_API` (info) in this setup, `DUPLICATE_OTEL_API` if both copies are on the classpath, and
@@ -126,7 +126,7 @@ has `OTEL_*` variables that the JVM doesn't.
 `OTEL_JAVAAGENT_EXTENSIONS`). It's a plugin for the agent, not something the application loads, so it stays out
 of `loadPaths`. It lets the agent identify the database behind ACF's built-in drivers; see
 [Database queries](#database-queries-cfquery). It's built for, and tested with, the agent version this release
-names (2.33.1). If a different agent changes the internals it relies on, queries are still traced but not identified,
+names (2.34.0). If a different agent changes the internals it relies on, queries are still traced but not identified,
 and it logs a warning once.
 
 **FusionReactor on the same server:** add

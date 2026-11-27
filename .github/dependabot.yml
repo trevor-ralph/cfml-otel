@@ -9,11 +9,15 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Build plugins for the bridge. The OTel API version is deliberately excluded: it must stay
-  # <= the javaagent's bundled SDK version, so it is bumped together with AGENT_VERSION in build.sh.
+  # Build plugins and test libraries for the bridge and the agent extension. OpenTelemetry is deliberately
+  # excluded: the API must stay <= the javaagent's bundled SDK version, and opentelemetry-instrumentation-api and
+  # the extension API are released with the agent, so all of them move together with AGENT_VERSION in build.sh
+  # (tests/check-versions.sh fails a lone bump).
   - package-ecosystem: maven
-    directory: /java
+    directories: ["/java", "/agent-extension"]
     schedule:
       interval: weekly
     ignore:
       - dependency-name: "io.opentelemetry:*"
+      - dependency-name: "io.opentelemetry.instrumentation:*"
+      - dependency-name: "io.opentelemetry.javaagent:*"
