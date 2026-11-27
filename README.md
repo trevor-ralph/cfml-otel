@@ -808,7 +808,8 @@ engines without SQL Server: `MSSQL=0 docker compose run --rm --no-deps tests` wi
 
 [CI](.github/workflows/ci.yml) runs the suite on every push and pull request: one x86-64 job per engine (with the
 agent, without it, ACF with the agent's HttpClient instrumentation off, and the bridge-only install), plus Lucee on
-GitHub's ARM runners, and a job that compiles the bridge against the oldest supported OTel API (1.38.0).
+GitHub's ARM runners, and a job that compiles the bridge against the oldest supported OTel API (1.38.0). One build
+job makes `lib/` and fetches the test dependencies first, and the engine jobs reuse its output.
 Pushing a `v*` tag that matches `box.json`'s version runs [release.yml](.github/workflows/release.yml), which
 builds and publishes the release zip, with the version's [CHANGELOG.md](CHANGELOG.md) section as the notes.
 GitHub's CodeQL code scanning (default setup) analyses the Java bridge, the Python test harness and the

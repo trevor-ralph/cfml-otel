@@ -34,6 +34,13 @@ api_pom="$(sed -n 's:.*<otel.api.version>\(.*\)</otel.api.version>.*:\1:p' java/
 api_bridge="$(sed -n 's/.*String BUNDLED_API_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' java/src/main/java/cfmlotel/bridge/OtelBridge.java | head -1)"
 echo "build.sh API_VERSION=$api_build pom.xml otel.api.version=$api_pom OtelBridge.BUNDLED_API_VERSION=$api_bridge"
 [[ -n "$api_build" && "$api_build" == "$api_pom" && "$api_build" == "$api_bridge" ]] || { echo "the bundled API version must agree in build.sh, pom.xml and OtelBridge" >&2; exit 1; }
+# The SQL Server driver the tests use: fetched by dev/fetch-test-deps.sh, named by the Lucee 8 datasource's Maven
+# coordinates, and mounted at that version's path in Lucee 8's Maven folder (dev/docker-compose.yml)
+jdbc_fetch="$(sed -n 's/^MSSQL_JDBC_VERSION="\${MSSQL_JDBC_VERSION:-\([^}]*\)}".*/\1/p' dev/fetch-test-deps.sh | head -1)"
+jdbc_app="$(sed -n 's/.*"com\.microsoft\.sqlserver:mssql-jdbc:\([^"]*\)".*/\1/p' tests/app/Application.cfc | head -1)"
+jdbc_mounts="$(grep -o 'mssql-jdbc/[^/]*/mssql-jdbc-[^:]*' dev/docker-compose.yml | sed 's:^mssql-jdbc/\([^/]*\)/mssql-jdbc-\(.*\)\.\(jar\|pom\)$:\1 \2:' | sort -u)"
+echo "fetch-test-deps.sh MSSQL_JDBC_VERSION=$jdbc_fetch Application.cfc=$jdbc_app docker-compose.yml mounts: $(echo "$jdbc_mounts" | tr '\n' ' ')"
+[[ -n "$jdbc_fetch" && "$jdbc_fetch" == "$jdbc_app" && "$jdbc_mounts" == "$jdbc_fetch $jdbc_fetch" ]] || { echo "the mssql-jdbc version must agree in dev/fetch-test-deps.sh, tests/app/Application.cfc and dev/docker-compose.yml's Lucee 8 mounts" >&2; exit 1; }
 # CHANGELOG.md needs a section for this version: the release workflow publishes it as the release notes
 grep -qF "## [$box]" CHANGELOG.md || { echo "CHANGELOG.md has no \"## [$box]\" section" >&2; exit 1; }
 if [[ $# -gt 0 ]]; then

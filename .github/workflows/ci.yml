@@ -19,8 +19,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build:
+    # Builds lib/ and fetches the javaagent and the test dependencies once per run. Every integration job unpacks
+    # this instead of downloading it all again: sixteen jobs fetching from Maven Central at once got rate-limited.
+    # The output is jars and CFML only, so the ARM jobs use it too.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dev
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check version strings agree
+        run: bash ../tests/check-versions.sh
+
+      - name: Build lib/, fetch the agent and test dependencies
+        run: docker compose run --rm --quiet-pull build
+
+      - name: Pack the build output
+        working-directory: .
+        run: tar -czf build-output.tgz lib dev/agent dev/coldbox dev/testbox dev/jdbc dev/serverapi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-output
+          path: build-output.tgz
+          retention-days: 1
+          if-no-files-found: error
+
   integration:
     name: integration (${{ matrix.engine }}, ${{ matrix.arch }})
+    needs: build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -58,11 +90,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check version strings agree
-        run: bash ../tests/check-versions.sh
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-output
 
-      - name: Build lib/, fetch the agent and test dependencies
-        run: docker compose run --rm --quiet-pull build
+      - name: Unpack the build output
+        working-directory: .
+        run: tar -xzf build-output.tgz && rm build-output.tgz
 
       - name: Start Grafana LGTM (and SQL Server)
         run: |

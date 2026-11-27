@@ -4,6 +4,10 @@
 # Needs only bash, curl and Docker (the bridge compiles inside a Maven container).
 set -euo pipefail
 
+# Maven Central and the other hosts rate-limit busy runners (HTTP 429): retry transient failures, honouring
+# Retry-After, with exponential backoff (curl retries 408, 429, 500, 502, 503 and 504)
+CURL=(curl -fsSL --retry 6 --retry-max-time 300)
+
 AGENT_VERSION="${AGENT_VERSION:-2.34.0}"
 API_VERSION="${API_VERSION:-1.68.0}"   # keep <= the agent's bundled SDK version
 MVN="https://repo1.maven.org/maven2"
@@ -15,9 +19,9 @@ fetch() { # <maven path> <dest file>
   local url="$MVN/$1" dest="$2"
   [[ -f "$dest" ]] && return 0
   echo "fetching $url"
-  curl -fsSL "$url" -o "$dest.part"
+  "${CURL[@]}" "$url" -o "$dest.part"
   local want got
-  want="$(curl -fsSL "$url.sha1" | cut -c1-40)"
+  want="$("${CURL[@]}" "$url.sha1" | cut -c1-40)"
   got="$(sha1sum "$dest.part" | cut -c1-40)"
   [[ "$want" == "$got" ]] || { echo "SHA-1 mismatch for $url" >&2; rm -f "$dest.part"; exit 1; }
   mv "$dest.part" "$dest"

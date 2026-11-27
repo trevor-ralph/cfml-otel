@@ -74,7 +74,12 @@ services:
       <<: [*otel-env, *mssql-env]
       OTEL_SERVICE_NAME: "cfml-otel-lucee8"
       OTEL_INSTRUMENTATION_APACHE_HTTPCLIENT_ENABLED: "false"   # see lucee7
-    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro"]
+    # The SQL Server driver the tests' datasource names by Maven coordinates, put where Lucee 8 keeps what it downloads
+    # from Maven, so it isn't fetched from Maven Central at runtime. The version must match MSSQL_JDBC_VERSION in
+    # fetch-test-deps.sh and tests/app/Application.cfc (tests/check-versions.sh checks).
+    volumes: ["..:/var/www/cfml-otel:ro", "./agent:/otel:ro", "./coldbox:/opt/coldbox:ro", "./testbox:/opt/testbox:ro", "..:/opt/cbmodules/cfml-otel:ro",
+              "./jdbc/mssql-jdbc.jar:/opt/lucee/server/lucee-server/mvn/com/microsoft/sqlserver/mssql-jdbc/13.6.3.jre11/mssql-jdbc-13.6.3.jre11.jar:ro",
+              "./jdbc/mssql-jdbc.pom:/opt/lucee/server/lucee-server/mvn/com/microsoft/sqlserver/mssql-jdbc/13.6.3.jre11/mssql-jdbc-13.6.3.jre11.pom:ro"]
 
   lucee7:
     image: lucee/lucee:7.1.2.195@sha256:b8ca8a11182e88606b868e630581cebc104eed90cd65cf79886eff3d9a0b0330
