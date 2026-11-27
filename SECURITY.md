@@ -23,6 +23,21 @@ gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 sha256sum -c SHA256SUMS
 ```
 
+`box install cfml-otel` downloads that same zip: the ForgeBox entry points at the GitHub release.
+
+The jars on Maven Central (`io.github.trevor-ralph:cfml-otel-bridge`, `:cfml-otel-agent-extension`, from 0.3.4) are
+byte-identical to the ones in the zip: the release workflow rebuilds them reproducibly and refuses to upload anything
+that differs. Each is signed with the maintainer's key, fingerprint
+`BC54EE0066B636EACE8EB10B1F08410C13E37F1B` (on keyserver.ubuntu.com and keys.openpgp.org):
+
+```bash
+gpg --keyserver keyserver.ubuntu.com --recv-keys BC54EE0066B636EACE8EB10B1F08410C13E37F1B
+gpg --verify cfml-otel-bridge-<version>.jar.asc cfml-otel-bridge-<version>.jar
+```
+
+Publishing to ForgeBox and Maven Central runs only for `v*` tags on main, from GitHub environments that hold the
+credentials and require the maintainer's approval for each release.
+
 ## Scope notes
 
 - cfml-otel only sends telemetry where the standard `OTEL_*` settings point. With the OpenTelemetry

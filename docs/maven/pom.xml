@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Assembles cfml-otel's lib/ folder from Maven Central, for installs without CommandBox / ForgeBox (README "Install",
+  "From Maven Central"). Copy this file, set the three versions to a release's, then:
+
+    mvn -q package -Dcfml-otel.dir=/path/to/cfml-otel
+
+  It writes, exactly as the release zip has them:
+    lib/        cfml-otel-bridge, opentelemetry-api / -context / -common, opentelemetry-instrumentation-api
+    lib/sdk/    the SDK fallback's jars (only needed with sdkFallback)
+    lib/agent/  cfml-otel-agent-extension (for -Dotel.javaagent.extensions; ACF)
+
+  The CFML side (models/, interceptors/, ModuleConfig.cfc, box.json) and lib/agent/'s FusionReactor blacklist file
+  aren't on Maven: take them from the repository at the same tag.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>example</groupId>
+  <artifactId>cfml-otel-lib</artifactId>
+  <version>1</version>
+  <packaging>pom</packaging>
+
+  <properties>
+    <!-- A cfml-otel release, and the versions it ships (that release's CHANGELOG and build.sh):
+         the OTel API at or below what your javaagent bundles, and instrumentation-api = the agent's version -->
+    <cfml-otel.version>0.3.4</cfml-otel.version>
+    <otel.api.version>1.68.0</otel.api.version>
+    <otel.instrumentation.version>2.34.0</otel.instrumentation.version>
+    <!-- Where lib/ goes: the cfml-otel folder your app maps -->
+    <cfml-otel.dir>${project.basedir}/cfml-otel</cfml-otel.dir>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.11.0</version>
+        <executions>
+          <execution>
+            <id>lib</id>
+            <phase>package</phase>
+            <goals><goal>copy</goal></goals>
+            <configuration>
+              <outputDirectory>${cfml-otel.dir}/lib</outputDirectory>
+              <artifactItems>
+                <artifactItem><groupId>io.github.trevor-ralph</groupId><artifactId>cfml-otel-bridge</artifactId><version>${cfml-otel.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-api</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-context</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-common</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry.instrumentation</groupId><artifactId>opentelemetry-instrumentation-api</artifactId><version>${otel.instrumentation.version}</version></artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+          <execution>
+            <id>sdk</id>
+            <phase>package</phase>
+            <goals><goal>copy</goal></goals>
+            <configuration>
+              <outputDirectory>${cfml-otel.dir}/lib/sdk</outputDirectory>
+              <artifactItems>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-common</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-trace</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-metrics</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-logs</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-extension-autoconfigure</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-extension-autoconfigure-spi</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-exporter-otlp</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-exporter-otlp-common</artifactId><version>${otel.api.version}</version></artifactItem>
+                <artifactItem><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-exporter-common</artifactId><version>${otel.api.version}</version></artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+          <execution>
+            <id>agent</id>
+            <phase>package</phase>
+            <goals><goal>copy</goal></goals>
+            <configuration>
+              <outputDirectory>${cfml-otel.dir}/lib/agent</outputDirectory>
+              <!-- The name the README's -Dotel.javaagent.extensions examples use -->
+              <stripVersion>true</stripVersion>
+              <artifactItems>
+                <artifactItem><groupId>io.github.trevor-ralph</groupId><artifactId>cfml-otel-agent-extension</artifactId><version>${cfml-otel.version}</version></artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

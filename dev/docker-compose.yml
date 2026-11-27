@@ -13,7 +13,9 @@
 #
 # Every image is pinned by tag and digest. Vendors re-push tags in place (Adobe has, more than once), so Dependabot
 # opens a PR for a new tag and for a re-pushed one alike, and the full integration matrix has to pass it. The build
-# service's image is also the Maven image build.sh and CI use outside it.
+# service's image also builds the releases and the Maven Central upload (release.yml), so its jars are reproducible
+# across all of them; build.sh and CI's bridge compile read it from here. The release jobs run the build and forgebox
+# images with publishing credentials, so review changes to them by hand.
 name: cfml-otel-dev
 
 # OTLP export settings; read by the javaagent and by cfml-otel's fallback SDK alike

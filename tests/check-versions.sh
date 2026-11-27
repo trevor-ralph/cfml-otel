@@ -41,6 +41,11 @@ jdbc_app="$(sed -n 's/.*"com\.microsoft\.sqlserver:mssql-jdbc:\([^"]*\)".*/\1/p'
 jdbc_mounts="$(grep -o 'mssql-jdbc/[^/]*/mssql-jdbc-[^:]*' dev/docker-compose.yml | sed 's:^mssql-jdbc/\([^/]*\)/mssql-jdbc-\(.*\)\.\(jar\|pom\)$:\1 \2:' | sort -u)"
 echo "fetch-test-deps.sh MSSQL_JDBC_VERSION=$jdbc_fetch Application.cfc=$jdbc_app docker-compose.yml mounts: $(echo "$jdbc_mounts" | tr '\n' ' ')"
 [[ -n "$jdbc_fetch" && "$jdbc_fetch" == "$jdbc_app" && "$jdbc_mounts" == "$jdbc_fetch $jdbc_fetch" ]] || { echo "the mssql-jdbc version must agree in dev/fetch-test-deps.sh, tests/app/Application.cfc and dev/docker-compose.yml's Lucee 8 mounts" >&2; exit 1; }
+# docs/maven/pom.xml (assembles lib/ from Maven Central) names this release and the versions it ships
+mvn_lib() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" docs/maven/pom.xml | head -1; }
+doc_v="$(mvn_lib cfml-otel.version)" doc_api="$(mvn_lib otel.api.version)" doc_inst="$(mvn_lib otel.instrumentation.version)"
+echo "docs/maven/pom.xml cfml-otel=$doc_v api=$doc_api instrumentation=$doc_inst"
+[[ "$doc_v" == "$box" && "$doc_api" == "$api_build" && "$doc_inst" == "$agent" ]] || { echo "docs/maven/pom.xml must name box.json's version, build.sh's API_VERSION and AGENT_VERSION" >&2; exit 1; }
 # CHANGELOG.md needs a section for this version: the release workflow publishes it as the release notes
 grep -qF "## [$box]" CHANGELOG.md || { echo "CHANGELOG.md has no \"## [$box]\" section" >&2; exit 1; }
 if [[ $# -gt 0 ]]; then

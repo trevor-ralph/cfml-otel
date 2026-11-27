@@ -68,17 +68,53 @@ gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 
 Both are the same file: the ForgeBox entry points CommandBox at the release's zip on GitHub.
 
-**The two jars are also on Maven Central** (0.3.4 and later), for builds and tools that fetch jars by coordinates,
-such as provisioning the agent extension next to the javaagent:
+**From Maven Central** (0.3.4 and later), where CommandBox isn't an option. cfml-otel's two jars are there as
+`io.github.trevor-ralph:cfml-otel-bridge` and `io.github.trevor-ralph:cfml-otel-agent-extension`, byte-identical to
+the release zip's (the build is reproducible, and the release workflow checks it before uploading).
+[docs/maven/pom.xml](docs/maven/pom.xml) assembles the whole `lib/` folder from Central, every jar the release zip has
+in the same folders:
 
-```
-io.github.trevor-ralph:cfml-otel-bridge:<version>
-io.github.trevor-ralph:cfml-otel-agent-extension:<version>
+```bash
+mvn -q -f docs/maven/pom.xml package -Dcfml-otel.dir=/path/to/cfml-otel   # writes lib/, lib/sdk/, lib/agent/
 ```
 
-They're byte-identical to the jars in the release zip: the build is reproducible, and the release workflow checks it
-before uploading. The bridge's OpenTelemetry dependencies are `provided`, so Maven doesn't pull them in; a CFML app
-still needs the zip's (or ForgeBox's) `lib/`, which has them.
+Set the three versions at the top of that pom to a release's (its CHANGELOG lists them). Checked for 0.3.4: all 16
+jars matched the release zip. The CFML side (`models/`, `interceptors/`, `ModuleConfig.cfc`, `box.json`) and the
+FusionReactor blacklist in `lib/agent/` aren't on Maven; take them from the repository at the same tag, e.g.
+`git clone --depth 1 --branch v<version> https://github.com/trevor-ralph/cfml-otel`.
+
+In a Java build, the bridge arrives **alone**: its OpenTelemetry dependencies are `provided`, so Maven doesn't pull
+them in, and you pick the API version to match your javaagent:
+
+```xml
+<dependency>
+  <groupId>io.github.trevor-ralph</groupId>
+  <artifactId>cfml-otel-bridge</artifactId>
+  <version>0.3.4</version>
+</dependency>
+<!-- at or below the API version your javaagent bundles (agent 2.34.0: 1.68.0); brings opentelemetry-context -->
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-api</artifactId>
+  <version>1.68.0</version>
+</dependency>
+<!-- only for setRoute(): released with the agent, same version as the agent -->
+<dependency>
+  <groupId>io.opentelemetry.instrumentation</groupId>
+  <artifactId>opentelemetry-instrumentation-api</artifactId>
+  <version>2.34.0</version>
+  <exclusions>
+    <exclusion><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-api-incubator</artifactId></exclusion>
+    <exclusion><groupId>io.opentelemetry.semconv</groupId><artifactId>opentelemetry-semconv</artifactId></exclusion>
+  </exclusions>
+</dependency>
+```
+
+The SDK fallback adds `opentelemetry-sdk`, `opentelemetry-sdk-extension-autoconfigure` and `opentelemetry-exporter-otlp`
+at the API's version. However the jars arrive, a CFML app loads them together from one folder (`lib/`): split across
+class loaders, `setRoute()` silently does nothing (see [Bridge-only install](#bridge-only-install-the-server-already-has-opentelemetry-jars)).
+The agent extension isn't a compile dependency; it's a jar to place next to the javaagent
+(`mvn dependency:copy -Dartifact=io.github.trevor-ralph:cfml-otel-agent-extension:<version> -DoutputDirectory=...`).
 
 **From source:**
 
@@ -90,7 +126,9 @@ docker compose -f dev/docker-compose.yml run --rm build    # any OS, only Docker
 This fetches `opentelemetry-api`, `-context`, `-common` and `opentelemetry-instrumentation-api` (SHA-1 verified,
 from Maven Central) and compiles the bridge and the agent extension with Maven, in a container, so no local JDK is
 needed. Maven also puts the SDK fallback's jars in `lib/sdk/` (checksum-verified). It also downloads the
-javaagent into `dev/agent/` for the dev stack.
+javaagent into `dev/agent/` for the dev stack. The first command builds in the same pinned Maven image as CI and the
+releases, so its jars are byte-identical to a release's for the same commit (on a Linux checkout; a Windows-mounted one
+differs in file-permission bits only). `./build.sh` with a local Maven builds working jars with your own JDK.
 
 **Version rule:** the API jars must be **≤ the agent's bundled SDK version**. Agent 2.34.0 bundles SDK 1.68.0,
 which is the default. Override with `AGENT_VERSION=… API_VERSION=… ./build.sh`.
@@ -830,8 +868,12 @@ engines without SQL Server: `MSSQL=0 docker compose run --rm --no-deps tests` wi
 agent, without it, ACF with the agent's HttpClient instrumentation off, and the bridge-only install), plus Lucee on
 GitHub's ARM runners, and a job that compiles the bridge against the oldest supported OTel API (1.38.0). One build
 job makes `lib/` and fetches the test dependencies first, and the engine jobs reuse its output.
-Pushing a `v*` tag that matches `box.json`'s version runs [release.yml](.github/workflows/release.yml), which
-builds and publishes the release zip, with the version's [CHANGELOG.md](CHANGELOG.md) section as the notes.
+Pushing a `v*` tag that matches `box.json`'s version, on a commit on main, runs
+[release.yml](.github/workflows/release.yml): it builds `lib/` in the pinned build image and publishes the release zip
+with `SHA256SUMS`, a provenance attestation and the version's [CHANGELOG.md](CHANGELOG.md) section as the notes. Then
+two jobs publish it: to ForgeBox (pointing at that zip) and to Maven Central (the two jars, checked byte for byte against
+the zip's, then signed). Each runs in its own GitHub environment that holds its credentials, admits only `v*` tags,
+and waits for the maintainer's approval; pre-releases (tags with a `-`) stay on GitHub.
 GitHub's CodeQL code scanning (default setup) analyses the Java bridge, the Python test harness and the
 workflows; CodeQL has no CFML support.
 
