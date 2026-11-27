@@ -7,7 +7,7 @@
   <!-- io.github.trevor-ralph: the Maven Central namespace verified for this GitHub account -->
   <groupId>io.github.trevor-ralph</groupId>
   <artifactId>cfml-otel-bridge</artifactId>
-  <version>0.3.3</version>
+  <version>0.3.4</version>
   <packaging>jar</packaging>
   <name>cfml-otel bridge</name>
   <description>Thin static bridge so CFML engines call the OpenTelemetry API through its public interfaces.</description>

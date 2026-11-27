@@ -7,7 +7,7 @@
   <!-- io.github.trevor-ralph: the Maven Central namespace verified for this GitHub account -->
   <groupId>io.github.trevor-ralph</groupId>
   <artifactId>cfml-otel-agent-extension</artifactId>
-  <version>0.3.3</version>
+  <version>0.3.4</version>
   <packaging>jar</packaging>
   <name>cfml-otel agent extension</name>
   <description>OpenTelemetry javaagent extension: identifies the database behind Adobe ColdFusion's built-in
