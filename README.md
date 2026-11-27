@@ -68,17 +68,53 @@ gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 
 Both are the same file: the ForgeBox entry points CommandBox at the release's zip on GitHub.
 
-**The two jars are also on Maven Central** (0.3.4 and later), for builds and tools that fetch jars by coordinates,
-such as provisioning the agent extension next to the javaagent:
+**From Maven Central** (0.3.4 and later), where CommandBox isn't an option. cfml-otel's two jars are there as
+`io.github.trevor-ralph:cfml-otel-bridge` and `io.github.trevor-ralph:cfml-otel-agent-extension`, byte-identical to
+the release zip's (the build is reproducible, and the release workflow checks it before uploading).
+[docs/maven/pom.xml](docs/maven/pom.xml) assembles the whole `lib/` folder from Central, every jar the release zip has
+in the same folders:
 
-```
-io.github.trevor-ralph:cfml-otel-bridge:<version>
-io.github.trevor-ralph:cfml-otel-agent-extension:<version>
+```bash
+mvn -q -f docs/maven/pom.xml package -Dcfml-otel.dir=/path/to/cfml-otel   # writes lib/, lib/sdk/, lib/agent/
 ```
 
-They're byte-identical to the jars in the release zip: the build is reproducible, and the release workflow checks it
-before uploading. The bridge's OpenTelemetry dependencies are `provided`, so Maven doesn't pull them in; a CFML app
-still needs the zip's (or ForgeBox's) `lib/`, which has them.
+Set the three versions at the top of that pom to a release's (its CHANGELOG lists them). Checked for 0.3.4: all 16
+jars matched the release zip. The CFML side (`models/`, `interceptors/`, `ModuleConfig.cfc`, `box.json`) and the
+FusionReactor blacklist in `lib/agent/` aren't on Maven; take them from the repository at the same tag, e.g.
+`git clone --depth 1 --branch v<version> https://github.com/trevor-ralph/cfml-otel`.
+
+In a Java build, the bridge arrives **alone**: its OpenTelemetry dependencies are `provided`, so Maven doesn't pull
+them in, and you pick the API version to match your javaagent:
+
+```xml
+<dependency>
+  <groupId>io.github.trevor-ralph</groupId>
+  <artifactId>cfml-otel-bridge</artifactId>
+  <version>0.3.4</version>
+</dependency>
+<!-- at or below the API version your javaagent bundles (agent 2.34.0: 1.68.0); brings opentelemetry-context -->
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-api</artifactId>
+  <version>1.68.0</version>
+</dependency>
+<!-- only for setRoute(): released with the agent, same version as the agent -->
+<dependency>
+  <groupId>io.opentelemetry.instrumentation</groupId>
+  <artifactId>opentelemetry-instrumentation-api</artifactId>
+  <version>2.34.0</version>
+  <exclusions>
+    <exclusion><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-api-incubator</artifactId></exclusion>
+    <exclusion><groupId>io.opentelemetry.semconv</groupId><artifactId>opentelemetry-semconv</artifactId></exclusion>
+  </exclusions>
+</dependency>
+```
+
+The SDK fallback adds `opentelemetry-sdk`, `opentelemetry-sdk-extension-autoconfigure` and `opentelemetry-exporter-otlp`
+at the API's version. However the jars arrive, a CFML app loads them together from one folder (`lib/`): split across
+class loaders, `setRoute()` silently does nothing (see [Bridge-only install](#bridge-only-install-the-server-already-has-opentelemetry-jars)).
+The agent extension isn't a compile dependency; it's a jar to place next to the javaagent
+(`mvn dependency:copy -Dartifact=io.github.trevor-ralph:cfml-otel-agent-extension:<version> -DoutputDirectory=...`).
 
 **From source:**
 

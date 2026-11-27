@@ -3,6 +3,13 @@
 All notable changes to cfml-otel. The release workflow publishes each version's section as its GitHub
 release notes.
 
+## [Unreleased]
+
+### Documented
+- Installing from Maven Central without CommandBox: `docs/maven/pom.xml` assembles the whole `lib/` folder (all 16 jars,
+  byte-identical to the release zip's for 0.3.4), and the README shows the dependencies a Java build adds, since the
+  bridge's OpenTelemetry dependencies are `provided` and don't come with it.
+
 ## [0.3.4] - 2026-11-27
 
 ### Added
