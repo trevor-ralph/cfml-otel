@@ -1,5 +1,6 @@
 # On a v* tag: builds lib/, packages the module zip, publishes SHA-256 checksums and a signed
-# build-provenance attestation, and creates the GitHub release.
+# build-provenance attestation, creates the GitHub release, and publishes it to ForgeBox (needs the
+# FORGEBOX_API_TOKEN secret; without it the ForgeBox step only warns).
 # Verify a download with: gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 name: Release
 
@@ -58,3 +59,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+
+      # ForgeBox gets box.json with its location set to the zip just released (dev/forgebox-publish.sh), so
+      # `box install cfml-otel` downloads that same attested zip. Pre-releases (tags with a "-") stay on GitHub.
+      - name: Publish to ForgeBox
+        if: ${{ !contains(github.ref_name, '-') }}
+        working-directory: dev
+        run: |
+          if [[ -z "$FORGEBOX_API_TOKEN" ]]; then
+            echo "::warning::The FORGEBOX_API_TOKEN secret isn't set, so this release wasn't published to ForgeBox."
+            exit 0
+          fi
+          docker compose run --rm --quiet-pull forgebox
+        env:
+          TAG: ${{ github.ref_name }}
+          FORGEBOX_API_TOKEN: ${{ secrets.FORGEBOX_API_TOKEN }}

@@ -52,13 +52,21 @@ CFML  ──>  models/OTel.cfc  ──>  lib/cfml-otel-bridge.jar  ──>  OTel
 
 ### 1. Get the module with `lib/` built
 
-**Easiest:** download `cfml-otel-<version>.zip` from [Releases](https://github.com/trevor-ralph/cfml-otel/releases)
+**With CommandBox,** from [ForgeBox](https://forgebox.io/view/cfml-otel) (0.3.3 and later):
+
+```bash
+box install cfml-otel        # into modules/cfml-otel/, CFCs and built jars
+```
+
+**Or** download `cfml-otel-<version>.zip` from [Releases](https://github.com/trevor-ralph/cfml-otel/releases)
 and unzip it where your app can map it. It contains the CFCs and the built jars. Each release also ships
 `SHA256SUMS` and a signed build-provenance attestation:
 
 ```bash
 gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 ```
+
+Both are the same file: the ForgeBox entry points CommandBox at the release's zip on GitHub.
 
 **From source:**
 
@@ -222,7 +230,7 @@ Tested with a second application that has no mapping and no jars ([tests/shared]
 
 Integration-tested with ColdBox 8.3 on every engine, with and without the agent ([tests/coldbox](tests/coldbox)).
 
-`box install` the module, then still add `modules/cfml-otel/lib/` to `this.javaSettings.loadPaths`.
+`box install cfml-otel`, then still add `modules/cfml-otel/lib/` to `this.javaSettings.loadPaths`.
 ColdBox can't change the classpath for you. Configure it in `config/Coldbox.cfc` under `moduleSettings["cfmlotel"]`
 (the module's model namespace; `moduleSettings["cfml-otel"]`, which 0.1.0's README showed, also works). Inject it with
 `property name="otel" inject="OTel@cfmlotel";`. The bundled interceptor:

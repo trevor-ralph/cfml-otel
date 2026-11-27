@@ -5,6 +5,10 @@ release notes.
 
 ## [Unreleased]
 
+### Added
+- Published to [ForgeBox](https://forgebox.io/view/cfml-otel): `box install cfml-otel`. The ForgeBox entry points
+  CommandBox at the GitHub release zip, so it installs the same checksummed, attested file, with `lib/` built.
+
 ### Changed
 - Built and tested with OpenTelemetry javaagent 2.34.0 (was 2.33.1). The bundled API is now 1.68.0, the version
   that agent is built on; the agent extension and `opentelemetry-instrumentation-api` move with it.

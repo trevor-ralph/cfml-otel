@@ -234,5 +234,17 @@ services:
       lgtm: { condition: service_started }
       mssql: { condition: service_healthy, required: false }
 
+  # Publishes a release to ForgeBox with CommandBox (dev/forgebox-publish.sh; release.yml runs it)
+  forgebox:
+    profiles: ["tools"]
+    image: ortussolutions/commandbox:3.24.0@sha256:d05b4952a1a8f178225a329a96345d83d915d8079019ab9896753e049dd15480
+    working_dir: /src
+    entrypoint: ["bash", "dev/forgebox-publish.sh"]
+    environment:
+      TAG: "${TAG:-}"
+      FORGEBOX_API_TOKEN: "${FORGEBOX_API_TOKEN:-}"
+      FORGEBOX_DRY_RUN: "${FORGEBOX_DRY_RUN:-}"
+    volumes: ["..:/src:ro"]
+
 volumes:
   m2: {}                         # Maven cache for the build service
