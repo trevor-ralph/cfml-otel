@@ -18,7 +18,7 @@ TESTBOX_SHA256="${TESTBOX_SHA256:-bd801e3aa26a3739d6da0149fc3fa8cfbfdb02a2ffd0e5
 # TestBox 7 needs its "globber" dependency (CommandBox normally installs it): the source tag from GitHub
 GLOBBER_VERSION="${GLOBBER_VERSION:-3.2.0}"
 GLOBBER_SHA256="${GLOBBER_SHA256:-a2626684ac6d1a3c6835b394e763998f9af7d2bea78c43b1b6bc461840ce2917}"
-MSSQL_JDBC_VERSION="${MSSQL_JDBC_VERSION:-13.6.2.jre11}"
+MSSQL_JDBC_VERSION="${MSSQL_JDBC_VERSION:-13.6.3.jre11}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

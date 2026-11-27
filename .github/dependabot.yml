@@ -9,6 +9,28 @@ updates:
       actions:
         patterns: ["*"]
 
+  # The dev/CI stack's images (engines, SQL Server, Grafana LGTM, the Maven build image), pinned by tag and digest: a
+  # new tag or a re-pushed one arrives as a PR the full integration matrix has to pass.
+  - package-ecosystem: docker-compose
+    directory: /dev
+    schedule:
+      interval: weekly
+    ignore:
+      # One service per supported Lucee major (6, 7, 8): only move each within its major. A new major is a new
+      # service, added by hand.
+      - dependency-name: "lucee/lucee"
+        update-types: ["version-update:semver-major"]
+
+  # The integration-test runner's base image and its hash-pinned pytest requirements
+  - package-ecosystem: docker
+    directory: /tests/integration
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /tests/integration
+    schedule:
+      interval: weekly
+
   # Build plugins and test libraries for the bridge and the agent extension. OpenTelemetry is deliberately
   # excluded: the API must stay <= the javaagent's bundled SDK version, and opentelemetry-instrumentation-api and
   # the extension API are released with the agent, so all of them move together with AGENT_VERSION in build.sh

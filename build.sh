@@ -6,9 +6,10 @@ set -euo pipefail
 
 AGENT_VERSION="${AGENT_VERSION:-2.34.0}"
 API_VERSION="${API_VERSION:-1.68.0}"   # keep <= the agent's bundled SDK version
-MAVEN_IMAGE="${MAVEN_IMAGE:-maven:3.9.15-eclipse-temurin-21}"
 MVN="https://repo1.maven.org/maven2"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+# For compiling outside the build container: the build service's image in dev/docker-compose.yml, kept current there
+MAVEN_IMAGE="${MAVEN_IMAGE:-$(sed -n 's/^ *image: *\(maven:.*\)$/\1/p' "$ROOT/dev/docker-compose.yml")}"
 
 fetch() { # <maven path> <dest file>
   local url="$MVN/$1" dest="$2"
