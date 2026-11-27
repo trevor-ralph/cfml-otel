@@ -271,7 +271,7 @@ The module can live in a folder with any name (`modules/cfml-otel` is what `box 
 Where you can't attach the agent (shared or managed hosting, locked-down JVM options, a quick trial),
 cfml-otel can run its own OpenTelemetry SDK. It's **opt-in**:
 
-1. Add `lib/sdk/` to the loadPaths as well, next to `lib/` (11 jars, about 1.3 MB):
+1. Add `lib/sdk/` to the loadPaths as well, next to `lib/` (10 jars, about 1.3 MB):
    `this.javaSettings = { loadPaths: [ otelRoot & "/lib/", otelRoot & "/lib/sdk/" ], ... }`.
 2. Turn it on: `new cfmlotel.models.OTel({ "sdkFallback": true, ... })`, or `sdkFallback: true` in the
    ColdBox module settings.
@@ -826,8 +826,9 @@ workflows; CodeQL has no CFML support.
 
 ## License and acknowledgements
 
-Apache-2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Release zips bundle the unmodified OpenTelemetry API
-jars (Apache-2.0, © The OpenTelemetry Authors).
+Apache-2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Release zips bundle unmodified OpenTelemetry jars
+(Apache-2.0, © The OpenTelemetry Authors): the API, context and common jars and `opentelemetry-instrumentation-api`
+in `lib/`, and the SDK and OTLP exporter jars for the SDK fallback in `lib/sdk/`. NOTICE lists each one.
 
 Prior art: [cbotel](https://github.com/coldbox-modules/cbotel) by Ortus Solutions, a ColdBox module for
 W3C `traceparent` handling.
