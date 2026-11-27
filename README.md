@@ -493,7 +493,7 @@ Nothing to do on Lucee, and one JVM option on ACF: the agent's JDBC instrumentat
 span, or your own `span()`). Tested on every engine against SQL Server 2022, with each engine's own driver
 (Lucee's bundled Microsoft driver, ACF's built-in "Microsoft SQL Server" driver). Lucee 8 loads its bundled
 drivers from Maven: a datasource defined in `Application.cfc` names the driver with
-`"maven": "com.microsoft.sqlserver:mssql-jdbc:13.4.0.jre11"` (an older `"bundleName": "org.lucee.mssql"` no
+`"maven": "com.microsoft.sqlserver:mssql-jdbc:13.6.3.jre11"` (an older `"bundleName": "org.lucee.mssql"` no
 longer loads there). It is traced the same way.
 
 - Span name: operation + target, e.g. `SELECT dbo.orders`.

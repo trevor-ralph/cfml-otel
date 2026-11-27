@@ -138,7 +138,8 @@ def wait_until_ready(targets: list[Target]) -> None:
         wait(f"grafana datasource {ds}", f"{GRAFANA}/api/datasources/name/{ds}", 0)
     for t in targets:
         wait(t.name, f"{t.base}/cfml-otel/tests/app/check.cfm", 60 if t.is_acf else 15)
-        # ACF can answer before its cfpm "sqlserver" package has finished installing
+        # ACF's cfpm "sqlserver" package goes in after ColdFusion starts (dev/acf-start.sh), so the database tests
+        # wait until a query through the built-in driver succeeds
         if t.is_acf and t.db:
             wait(f"{t.name} SQL Server driver", f"{t.base}/cfml-otel/tests/app/ready-db.cfm", 0)
 
