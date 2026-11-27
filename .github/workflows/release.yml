@@ -1,6 +1,7 @@
 # On a v* tag: builds lib/, packages the module zip, publishes SHA-256 checksums and a signed
 # build-provenance attestation, creates the GitHub release, and publishes it to ForgeBox (needs the
-# FORGEBOX_API_TOKEN secret; without it the ForgeBox step only warns).
+# FORGEBOX_API_TOKEN secret in the "forgebox" environment; without it the ForgeBox job only warns).
+# Only commits on main are released.
 # Verify a download with: gh attestation verify cfml-otel-<version>.zip --repo trevor-ralph/cfml-otel
 name: Release
 
@@ -23,6 +24,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0    # all history, so the next step can see main
+
+      # Only admins can create v* tags (the "Protect release tags" ruleset), but a tag can point at any commit:
+      # release only what is on main
+      - name: Check the tagged commit is on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main; tag a commit on main to release" >&2; exit 1; }
 
       - name: Check tag matches the version in box.json, ModuleConfig, pom.xml and the bridge
         run: bash tests/check-versions.sh "$TAG"
@@ -60,14 +69,28 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
 
-      # ForgeBox gets box.json with its location set to the zip just released (dev/forgebox-publish.sh), so
-      # `box install cfml-otel` downloads that same attested zip. Pre-releases (tags with a "-") stay on GitHub.
+  # ForgeBox gets box.json with its location set to the zip just released (dev/forgebox-publish.sh), so
+  # `box install cfml-otel` downloads that same attested zip. Pre-releases (tags with a "-") stay on GitHub.
+  # A job of its own, read-only, in the "forgebox" environment: that environment holds FORGEBOX_API_TOKEN and only
+  # admits v* tags, so no branch, pull request or other workflow can read the token.
+  forgebox:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: forgebox
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Publish to ForgeBox
-        if: ${{ !contains(github.ref_name, '-') }}
         working-directory: dev
         run: |
           if [[ -z "$FORGEBOX_API_TOKEN" ]]; then
-            echo "::warning::The FORGEBOX_API_TOKEN secret isn't set, so this release wasn't published to ForgeBox."
+            echo "::warning::The forgebox environment has no FORGEBOX_API_TOKEN secret, so this release wasn't published to ForgeBox."
             exit 0
           fi
           docker compose run --rm --quiet-pull forgebox
