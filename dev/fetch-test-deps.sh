@@ -12,6 +12,8 @@
 # Runs on the host (bash + curl) or in the build container (`docker compose run --rm build`).
 set -euo pipefail
 
+CURL=(curl -fsSL --retry 6 --retry-max-time 300)   # retries transient failures and HTTP 429, as in build.sh
+
 COLDBOX_VERSION="${COLDBOX_VERSION:-8.3.0}"
 COLDBOX_SHA256="${COLDBOX_SHA256:-302a45e278f2cc9b11aea051406e2bc1989d83fef684e3cfdb3fac61d1415573}"
 TESTBOX_VERSION="${TESTBOX_VERSION:-7.2.2}"
@@ -39,7 +41,7 @@ if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$COLDBOX_VERSION" ]];
 else
   url="https://downloads.ortussolutions.com/ortussolutions/coldbox/$COLDBOX_VERSION/coldbox-$COLDBOX_VERSION.zip"
   echo "fetching $url"
-  curl -fsSL "$url" -o "$tmp/coldbox.zip"
+  "${CURL[@]}" "$url" -o "$tmp/coldbox.zip"
   got="$(sha256sum "$tmp/coldbox.zip" | cut -c1-64)"
   [[ "$got" == "$COLDBOX_SHA256" ]] || { echo "SHA-256 mismatch for $url: got $got" >&2; exit 1; }
   # empty it rather than delete it: running engine containers bind-mount this folder
@@ -59,8 +61,8 @@ if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$MSSQL_JDBC_VERSION" 
 else
   url="https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/$MSSQL_JDBC_VERSION/mssql-jdbc-$MSSQL_JDBC_VERSION.jar"
   echo "fetching $url"
-  curl -fsSL "$url" -o "$tmp/mssql-jdbc.jar"
-  want="$(curl -fsSL "$url.sha1" | cut -c1-40)"
+  "${CURL[@]}" "$url" -o "$tmp/mssql-jdbc.jar"
+  want="$("${CURL[@]}" "$url.sha1" | cut -c1-40)"
   got="$(sha1sum "$tmp/mssql-jdbc.jar" | cut -c1-40)"
   [[ "$want" == "$got" ]] || { echo "SHA-1 mismatch for $url" >&2; exit 1; }
   mv "$tmp/mssql-jdbc.jar" "$dest/mssql-jdbc.jar"
@@ -88,8 +90,8 @@ else
       url="https://repo1.maven.org/maven2/io/opentelemetry/opentelemetry-$a/$SERVER_API_VERSION/opentelemetry-$a-$SERVER_API_VERSION.jar"
     fi
     echo "fetching $url"
-    curl -fsSL "$url" -o "$tmp/otel-$a.jar"
-    want="$(curl -fsSL "$url.sha1" | cut -c1-40)"
+    "${CURL[@]}" "$url" -o "$tmp/otel-$a.jar"
+    want="$("${CURL[@]}" "$url.sha1" | cut -c1-40)"
     got="$(sha1sum "$tmp/otel-$a.jar" | cut -c1-40)"
     [[ "$want" == "$got" ]] || { echo "SHA-1 mismatch for $url" >&2; exit 1; }
     # fixed names: dev/docker-compose.yml mounts them file by file
@@ -106,7 +108,7 @@ if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$TESTBOX_VERSION" ]];
 else
   url="https://downloads.ortussolutions.com/ortussolutions/testbox/$TESTBOX_VERSION/testbox-$TESTBOX_VERSION.zip"
   echo "fetching $url"
-  curl -fsSL "$url" -o "$tmp/testbox.zip"
+  "${CURL[@]}" "$url" -o "$tmp/testbox.zip"
   got="$(sha256sum "$tmp/testbox.zip" | cut -c1-64)"
   [[ "$got" == "$TESTBOX_SHA256" ]] || { echo "SHA-256 mismatch for $url: got $got" >&2; exit 1; }
   mkdir -p "$dest"
@@ -124,7 +126,7 @@ if [[ -f "$dest/.version" && "$(cat "$dest/.version")" == "$GLOBBER_VERSION" ]];
 else
   url="https://github.com/Ortus-Solutions/globber/archive/refs/tags/v$GLOBBER_VERSION.zip"
   echo "fetching $url"
-  curl -fsSL "$url" -o "$tmp/globber.zip"
+  "${CURL[@]}" "$url" -o "$tmp/globber.zip"
   got="$(sha256sum "$tmp/globber.zip" | cut -c1-64)"
   [[ "$got" == "$GLOBBER_SHA256" ]] || { echo "SHA-256 mismatch for $url: got $got" >&2; exit 1; }
   mkdir -p "$tmp/globber" "$dest"
