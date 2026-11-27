@@ -204,7 +204,7 @@ services:
   # ---- tools: started only by `docker compose run --rm <name>` -------------------------------------
   build:
     profiles: ["tools"]
-    image: maven:3.10.2-eclipse-temurin-21
+    image: maven:3.9.16-eclipse-temurin-21
     working_dir: /src
     entrypoint: ["bash", "-c", "./build.sh && bash dev/fetch-test-deps.sh"]
     volumes: ["..:/src", "m2:/root/.m2"]
