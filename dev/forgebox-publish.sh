@@ -16,10 +16,30 @@ version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' box
 url="https://github.com/trevor-ralph/cfml-otel/releases/download/$TAG/cfml-otel-$version.zip"
 curl -fsSL --retry 6 -o /dev/null -r 0-0 "$url" || { echo "the release zip isn't there: $url" >&2; exit 1; }
 
+src="$PWD"
 work="$(mktemp -d)"
 cp box.json README.md CHANGELOG.md "$work/"
 cd "$work"
 box package set location="$url"
+
+# ForgeBox shows README.md and CHANGELOG.md, but resolves their links to files in this repo (`](LICENSE)`,
+# `](docs/grafana)`) against forgebox.io, where they lead nowhere. Point them at this tag on GitHub instead; the
+# repository's copies keep relative links, which GitHub renders.
+repo_url="https://github.com/trevor-ralph/cfml-otel"
+for doc in README.md CHANGELOG.md; do
+  grep -o '](\([^)]*\))' "$doc" | sed 's/^](\(.*\))$/\1/' | grep -Ev '^(https?:|mailto:|#)' | sort -u |
+    while IFS= read -r link; do
+      path="${link%%#*}"
+      [[ -e "$src/$path" ]] || { echo "$doc links to $link, which isn't in the repository" >&2; exit 1; }
+      kind=blob
+      [[ -d "$src/$path" ]] && kind=tree
+      esc="$(printf '%s' "$link" | sed 's/[]$.*^|[\\]/\\&/g')"   # [. would start a collating element
+      sed -i "s|](${esc})|](${repo_url}/${kind}/${TAG}/${link})|g" "$doc"
+      echo "$doc: $link -> ${repo_url}/${kind}/${TAG}/${link}"
+    done
+  left="$(grep -o '](\([^)]*\))' "$doc" | grep -Ev '\]\((https?:|mailto:|#)' || true)"
+  [[ -z "$left" ]] || { echo "$doc still has links relative to the repository: $left" >&2; exit 1; }
+done
 
 if [[ "${FORGEBOX_DRY_RUN:-}" == "1" ]]; then
   echo "dry run: would publish cfml-otel $version to ForgeBox with this box.json:"
